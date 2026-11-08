@@ -127,9 +127,8 @@
   });
 
   // ---------- filling in addresses ----------
-  var keyTrouble = false;   // the Geoapify key was rejected or is out of lookups: use Photon
-  var sharedTrouble = false;   // the shared suggestions aren't set up, are busy or used up today: use Photon
-  function geoKey() { return keyTrouble ? '' : (store(GEO_KEY) || ''); }
+  var S = T.makeSuggester({ key: function () { return store(GEO_KEY) || ''; }, notice: function (t) { msg(t, true); } });
+  function geoKey() { return S.keyOk() ? (store(GEO_KEY) || '') : ''; }
   function suggestOn() { return store(SUGGEST) !== 'off'; }
   function cellOf(tr, field) { return tr.querySelectorAll('input')[COLS.indexOf(field)]; }
   function setIfEmpty(inp, v) { if (inp && v && !inp.value.trim()) inp.value = v; }
@@ -155,7 +154,6 @@
   // key, else Geoapify through the Label Sheet Keeper server (its key is shared
   // by everyone), else the free Photon service.
   var sugg = $('sugg'), suggList = $('sugg-list'), suggFor = null, suggItems = [], suggActive = -1, suggTimer = 0, suggSeq = 0;
-  var pausedUntil = 0, cache = {};
   var CREDITS = {
     photon: [['Photon by Komoot', 'https://photon.komoot.io/'], ['© OpenStreetMap contributors', 'https://www.openstreetmap.org/copyright']],
     geoapify: [['Powered by Geoapify', 'https://www.geoapify.com/'], ['© OpenStreetMap contributors', 'https://www.openstreetmap.org/copyright']]
@@ -208,26 +206,17 @@
     clearTimeout(suggTimer);
     var text = inp.value.trim();
     // Only ask once there's a house number and a few letters of the street.
-    if (!suggestOn() || Date.now() < pausedUntil || text.length < 5 || !/\d/.test(text) || !/[a-z]{2}/i.test(text)) { if (suggFor === inp) closeSugg(); return; }
+    if (!suggestOn() || !S.ready(text)) { if (suggFor === inp) closeSugg(); return; }
+    var tr = inp.closest('tr'), city = cellOf(tr, 'city').value.trim(), state = cellOf(tr, 'state').value.trim();
+    var q = [text, city, state].filter(Boolean).join(', '), seq = ++suggSeq;
+    // What's already known and still fits shows at once; a fresher answer follows.
+    var now = S.quick(q);
+    if (now.length && document.activeElement === inp) showSugg(inp, now);
     suggTimer = setTimeout(function () {
-      var tr = inp.closest('tr'), city = cellOf(tr, 'city').value.trim(), state = cellOf(tr, 'state').value.trim();
-      var key = geoKey(), shared = !key && !sharedTrouble, q = [text, city, state].filter(Boolean).join(', ');
-      var id = (key ? 'g:' : shared ? 's:' : 'p:') + q.toLowerCase();
-      var seq = ++suggSeq;
-      var lookup = function () {
-        if (key || !shared) return T.suggestAddresses(q, key);
-        return T.sharedSuggest(q).catch(function () { sharedTrouble = true; return T.suggestAddresses(q, ''); });
-      };
-      var got = cache[id] ? Promise.resolve(cache[id]) : lookup().then(function (items) { cache[id] = items; return items; });
-      got.then(function (items) {
+      S.ask(q).then(function (items) {
         if (seq === suggSeq && document.activeElement === inp) showSugg(inp, items);
-      }).catch(function (e) {
-        var status = e && e.status;
-        if (key && (status === 401 || status === 403)) { keyTrouble = true; msg('Geoapify didn’t accept your key, so suggestions use the free Photon service for now. Check the key in the panel’s Settings.', true); }
-        else if (key && status === 429) { keyTrouble = true; msg('Your Geoapify lookups for today are used up, so suggestions use the free Photon service until tomorrow.', true); }
-        else if (!key && (status === 429 || status === 503)) { pausedUntil = Date.now() + 60000; msg('The free address suggestions are busy. They’ll try again in a minute.', true); }
-      });
-    }, geoKey() || !sharedTrouble ? 300 : 400);
+      }).catch(function () { /* the suggester says what happened */ });
+    }, S.delay());
   }
   rowsEl.addEventListener('input', function (e) {
     var inp = e.target;

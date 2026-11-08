@@ -83,7 +83,7 @@ Labels you send show up on shipping-label sheets as "1 label from your phone." *
 
 ### Address suggestions
 
-In the table window, type a house number and street, and the panel suggests matching US and Canadian addresses. Pick one to fill in the street, city, state or province, and ZIP or postal code. A ZIP code or postal code on its own also fills in the city (using the free Zippopotam.us service).
+Type a house number and the start of the street ("8 Ma") in any address box (Address, Ship to, From, or a contact's addresses) or in the table window, and matching US and Canadian addresses drop down under it. Pick one with a click, or the arrow keys and Enter or Tab, to fill in the street, city, state or province, and ZIP or postal code; in an address box that's the street line and the city line under it. Each letter you add narrows the list at once while a fresher answer is on its way. A ZIP code or postal code on its own also fills in the city (using the free Zippopotam.us service).
 
 Suggestions come from [Geoapify](https://www.geoapify.com/) through the Label Sheet Keeper server (the Worker in `worker/`), which holds one Geoapify key for everyone, so you don't need one. Everyone together gets up to 2,700 a day, and one internet address up to 300. When they're used up, or the server is busy, suggestions come from [Photon by Komoot](https://photon.komoot.io/) instead, a free service with no sign-up. Both use [OpenStreetMap](https://www.openstreetmap.org/copyright) data, and what you type is sent to them. Turn suggestions off in **Settings › Address suggestions**.
 

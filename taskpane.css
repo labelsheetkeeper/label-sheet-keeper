@@ -256,3 +256,9 @@ ol.book-list li span::before{counter-increment:wait;content:counter(wait) ". ";c
 /* A saved contact's second address, phones and emails */
 .book-edit .pair2{display:grid;grid-template-columns:1fr 1fr;gap:6px}
 .book-list .book-edit input{width:100%;font-size:12.5px}
+/* Address suggestions under the address box being typed in */
+.asugg{position:absolute;z-index:30;background:var(--surface);border:1px solid var(--line);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.18);overflow:hidden}
+.asugg button{display:block;width:100%;text-align:left;border:0;background:none;color:var(--ink);font:13px/1.3 var(--f);padding:7px 10px;cursor:pointer}
+.asugg button small{display:block;color:var(--muted);font-size:11.5px}
+.asugg button[aria-selected="true"],.asugg button:hover{background:var(--accent-soft, rgba(13,107,102,.12))}
+.asugg-credit{margin:0;padding:4px 10px;font-size:10.5px;color:var(--muted);border-top:1px solid var(--line)}

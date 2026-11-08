@@ -524,6 +524,60 @@
   // Geoapify through the Label Sheet Keeper server, which holds a key for everyone.
   var SERVER = 'https://api.labelsheetkeeper.workers.dev';
   function sharedSuggest(text) { return fetchJson(SERVER + '/suggest?text=' + encodeURIComponent(text), 5000).then(geoapifyItems); }
+
+  // ---------- address suggestions as you type ----------
+  // One per window. Asks Geoapify with the user's own key, else through the
+  // Label Sheet Keeper server, else Photon (when the others aren't set up, are
+  // busy or used up). Remembers answers, and has the ones that still fit
+  // ready at once while a fresher answer is on its way.
+  // opts: { key: () -> the user's own Geoapify key or '', notice: (text) -> void }
+  function makeSuggester(opts) {
+    var keyTrouble = false, sharedTrouble = false, pausedUntil = 0, cache = {}, order = [];
+    var notice = function (t) { if (opts && opts.notice) opts.notice(t); };
+    function ownKey() { return keyTrouble ? '' : String((opts && opts.key && opts.key()) || ''); }
+    function source() { return ownKey() ? 'key' : sharedTrouble ? 'photon' : 'shared'; }
+    // Enough typed to ask: a house number and two letters of the street (Photon, shared by everyone, a little more).
+    function ready(text) {
+      text = String(text || '').trim();
+      return Date.now() >= pausedUntil && text.length >= (source() === 'photon' ? 5 : 4) && /\d/.test(text) && /[a-z]{2}/i.test(text);
+    }
+    function delay() { return source() === 'photon' ? 300 : 150; }
+    // Each word typed starts a word of the suggestion: "8 map" fits "8 Maple Way", not "28 Maple".
+    function fits(item, words) {
+      var have = (item.street + ' ' + item.sub).toLowerCase().split(/[\s,]+/);
+      return words.every(function (w) { return have.some(function (h) { return h.indexOf(w) === 0; }); });
+    }
+    function quick(q) {
+      q = String(q || '').toLowerCase().trim();
+      var words = q.split(/[\s,]+/).filter(Boolean), src = source() + ':';
+      for (var i = order.length - 1; i >= 0; i--) {
+        var k = order[i], asked = k.slice(src.length);
+        if (k.indexOf(src) !== 0 || q.indexOf(asked.split(',')[0].trim()) !== 0) continue;
+        var got = cache[k].filter(function (it) { return fits(it, words); });
+        if (got.length) return got;
+      }
+      return [];
+    }
+    function ask(q) {
+      var src = source(), id = src + ':' + String(q).toLowerCase().trim();
+      if (cache[id]) return Promise.resolve(cache[id]);
+      var p = src === 'key' ? geoapifySuggest(q, ownKey())
+        : src === 'shared' ? sharedSuggest(q).catch(function () { sharedTrouble = true; return photonSuggest(q); })
+          : photonSuggest(q);
+      return p.then(function (items) {
+        cache[id] = items; order.push(id);
+        if (order.length > 60) delete cache[order.shift()];
+        return items;
+      }, function (e) {
+        var s = e && e.status;
+        if (src === 'key' && (s === 401 || s === 403)) { keyTrouble = true; notice('Geoapify didn’t accept your key, so suggestions use the shared ones for now. Check the key in the panel’s Settings.'); }
+        else if (src === 'key' && s === 429) { keyTrouble = true; notice('Your Geoapify lookups for today are used up, so suggestions use the shared ones until tomorrow.'); }
+        else if (s === 429 || s === 503) { pausedUntil = Date.now() + 60000; notice('Address suggestions are busy. They’ll try again in a minute.'); }
+        throw e;
+      });
+    }
+    return { ready: ready, delay: delay, quick: quick, ask: ask, keyOk: function () { return !keyTrouble; } };
+  }
   var PHOTON = 'https://photon.komoot.io/api/?limit=8&lang=en&layer=house&layer=street&countrycode=US&countrycode=CA&q=';
   function photonSuggest(text) {
     // A street without that house number in the map still gets the number typed.
@@ -813,7 +867,7 @@
     parseDelimited: parseDelimited, readXlsx: readXlsx, parseVCard: parseVCard,
     headerMap: headerMap, rowsToAddresses: rowsToAddresses, rowsToContacts: rowsToContacts, addressLines: addressLines, fixZip: fixZip, linesToFields: linesToFields,
     fontCss: fontCss, textHeight: textHeight, fits: fits, fitScale: fitScale, findLabelBorder: findLabelBorder,
-    unwrapTable: unwrapTable, countryOf: countryOf, fixPostal: fixPostal, regionCode: regionCode, lookupPostal: lookupPostal, suggestAddresses: suggestAddresses, sharedSuggest: sharedSuggest,
+    unwrapTable: unwrapTable, countryOf: countryOf, fixPostal: fixPostal, regionCode: regionCode, lookupPostal: lookupPostal, suggestAddresses: suggestAddresses, sharedSuggest: sharedSuggest, makeSuggester: makeSuggester,
     reorderLink: reorderLink, numberText: numberText, qrMatrix: qrMatrix, code128: code128, findGrid: findGrid, alignFromScan: alignFromScan,
     MARK: MARK, markSpots: markSpots, findMarks: findMarks, alignFromMarks: alignFromMarks,
     FIELDS: FIELDS, PROVINCES: PROVINCES

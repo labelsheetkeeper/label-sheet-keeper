@@ -59,6 +59,10 @@ jobs:
         if: ${{ !cancelled() }}
         run: python tests/e2e/run19.py
 
+      - name: Address suggestions in the panel's address boxes
+        if: ${{ !cancelled() }}
+        run: python tests/e2e/run20.py
+
       - name: Worker request handling
         if: ${{ !cancelled() }}
         run: node tests/worker-test.mjs

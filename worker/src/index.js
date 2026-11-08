@@ -37,6 +37,7 @@ const SUGGEST_PER_DAY = 2700;         // for everyone together: Geoapify's free 
 const SUGGEST_PER_PERSON = 300;       // for one internet address a day
 const GEO_URL = 'https://api.geoapify.com/v1/geocode/autocomplete?format=json&lang=en&limit=5&filter=countrycode:us,ca&text=';
 const GEO_KEEP = ['housenumber', 'street', 'address_line1', 'address_line2', 'city', 'state_code', 'postcode', 'country_code'];
+const outOf = new Map();              // "*" or a who -> the day its suggestions ran out
 
 const BOX_RE = /^[A-Za-z0-9_-]{22}$/;
 const ID_RE = /^[A-Za-z0-9_-]{16}$/;
@@ -215,13 +216,24 @@ async function suggest(request, env, url, origin, ctx) {
 
   const today = new Date().toISOString().slice(0, 10);
   const who = (await sha256((request.headers.get('CF-Connecting-IP') || 'unknown') + '|' + today)).slice(0, 32);
+  const usedUp = () => json({ error: 'Address suggestions are used up for today.' }, 429, origin);
+  if (outOf.get('*') === today || outOf.get(who) === today) return usedUp();
+
+  // Count the question and ask Geoapify at the same time, so the answer comes sooner.
   const count = 'INSERT INTO usage (day, who, n) VALUES (?, ?, 1) ON CONFLICT (day, who) DO UPDATE SET n = n + 1 RETURNING n';
+  const asking = fetch(GEO_URL + encodeURIComponent(text) + '&apiKey=' + encodeURIComponent(env.GEOAPIFY_KEY)).catch(() => null);
   const [all, mine] = await env.DB.batch([env.DB.prepare(count).bind(today, '*'), env.DB.prepare(count).bind(today, who)]);
   if (ctx && Math.random() < 0.02) ctx.waitUntil(env.DB.prepare('DELETE FROM usage WHERE day < ?').bind(today).run());
-  if (all.results[0].n > SUGGEST_PER_DAY || mine.results[0].n > SUGGEST_PER_PERSON) return json({ error: 'Address suggestions are used up for today.' }, 429, origin);
+  const overAll = all.results[0].n > SUGGEST_PER_DAY, overMine = mine.results[0].n > SUGGEST_PER_PERSON;
+  if (overAll || overMine) {
+    // Remembered by this copy of the Worker, so Geoapify isn't asked for them again today.
+    if (outOf.size > 5000) outOf.clear();
+    outOf.set(overAll ? '*' : who, today);
+    return usedUp();
+  }
 
-  let r;
-  try { r = await fetch(GEO_URL + encodeURIComponent(text) + '&apiKey=' + encodeURIComponent(env.GEOAPIFY_KEY)); } catch (e) { return json({ error: 'Address suggestions are busy.' }, 503, origin); }
+  const r = await asking;
+  if (!r) return json({ error: 'Address suggestions are busy.' }, 503, origin);
   if (r.status === 401 || r.status === 403) return json({ error: 'not set up' }, 503, origin);
   if (r.status === 429) return json({ error: 'Address suggestions are used up for today.' }, 429, origin);
   if (!r.ok) return json({ error: 'Address suggestions are busy.' }, 503, origin);

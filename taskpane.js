@@ -11,7 +11,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.10';
+  var VERSION = '1.11';
   var ADDIN_ID = '8d491c85-a76d-4d26-a6f5-b7b2dd4a1711';   // must match manifest.xml <Id>
   var F = window.LSK_FORMATS;
   var S = window.LSK_SHEET;
@@ -2263,6 +2263,103 @@
     if (!over.length) return;
     ask('The text may be cut off on ' + labelList(over) + '. Shrink it to fit?', 'Shrink', function () { doFit(over); });
   }
+  // ---------- address suggestions in the address boxes ----------
+  // Typing a house number and street on a line of an address box suggests
+  // addresses (the same ones as the table window); picking one fills that
+  // line and the city line under it.
+  // picked: the street just chosen, so typing ", Apt 4" after it stays quiet.
+  var AS = null, as = { box: null, line: -1, items: [], active: -1, timer: 0, seq: 0, picking: false, picked: null };
+  function suggester() {
+    if (!AS) AS = T.makeSuggester({ key: function () { return store(LS.geoKey) || ''; }, notice: function (t) { say(t, 'warn'); } });
+    return AS;
+  }
+  function caretLine(box) {
+    var v = box.value, pos = box.selectionStart || 0, start = v.lastIndexOf('\n', pos - 1) + 1;
+    var end = v.indexOf('\n', pos);
+    if (end < 0) end = v.length;
+    return { index: v.slice(0, start).split('\n').length - 1, text: v.slice(start, end) };
+  }
+  // A city line: "Boston, MA 02108", "Toronto ON  M5V 3L9".
+  function cityLike(s) { return /,\s*[A-Za-z]{2}\b|\b\d{5}(-\d{4})?\s*$|[A-Za-z]\d[A-Za-z][ -]?\d[A-Za-z]\d\s*$/.test(String(s || '')); }
+  function closeAs() { clearTimeout(as.timer); as.seq++; $('asugg').hidden = true; as.box = null; as.items = []; as.active = -1; }
+  function showAs(box, line, items) {
+    if (!items.length) { closeAs(); return; }
+    as.box = box; as.line = line; as.items = items; as.active = -1;
+    var list = $('asugg-list');
+    list.innerHTML = '';
+    items.forEach(function (it, i) {
+      var b = el('button', '', it.label);
+      b.type = 'button'; b.tabIndex = -1; b.setAttribute('role', 'option'); b.setAttribute('aria-selected', 'false');
+      b.appendChild(el('small', '', it.sub));
+      b.addEventListener('mousedown', function (e) { e.preventDefault(); pickAs(i); });
+      list.appendChild(b);
+    });
+    $('asugg-credit').textContent = (items[0].source === 'photon' ? 'Photon by Komoot' : 'Powered by Geoapify') + ' · © OpenStreetMap contributors';
+    var r = box.getBoundingClientRect(), d = $('asugg');
+    d.style.left = (r.left + window.scrollX) + 'px';
+    d.style.top = (r.bottom + window.scrollY + 2) + 'px';
+    d.style.width = r.width + 'px';
+    d.hidden = false;
+  }
+  function markAs(i) {
+    as.active = i;
+    Array.prototype.forEach.call($('asugg-list').children, function (b, j) { b.setAttribute('aria-selected', j === i ? 'true' : 'false'); });
+  }
+  function pickAs(i) {
+    var it = as.items[i], box = as.box;
+    if (!it || !box) return;
+    var lines = box.value.split('\n'), at = as.line;
+    var addr = T.addressLines({ street: it.street, city: it.city, state: it.state, zip: it.zip, country: it.country }, { home: homeCountry() });
+    // Replace the street line, and the city (and country) line under it if there is one.
+    var n = 1;
+    if (cityLike(lines[at + 1])) { n = 2; if (/^(usa|u\.s\.a\.|united states|canada)$/i.test(String(lines[at + 2] || '').trim())) n = 3; }
+    Array.prototype.splice.apply(lines, [at, n].concat(addr));
+    box.value = lines.join('\n');
+    var pos = lines.slice(0, at).join('\n').length + (at ? 1 : 0) + addr[0].length;
+    closeAs();
+    as.picked = { box: box, line: at, street: addr[0] };
+    as.picking = true;
+    box.dispatchEvent(new Event('input', { bubbles: true }));
+    as.picking = false;
+    box.focus();
+    box.setSelectionRange(pos, pos);
+  }
+  function boxChanged(box) {
+    clearTimeout(as.timer);
+    if (store(LS.suggest) === 'off') { closeAs(); return; }
+    var c = caretLine(box), text = c.text.trim(), S = suggester(), p = as.picked;
+    if (p && p.box === box && p.line === c.index && text.indexOf(p.street) === 0) return;
+    as.picked = null;
+    if (!/^\d/.test(text) || !S.ready(text)) { if (!$('asugg').hidden) closeAs(); return; }
+    var next = box.value.split('\n')[c.index + 1], q = cityLike(next) ? text + ', ' + next.trim() : text;
+    var seq = ++as.seq, now = S.quick(q);
+    // What's already known and still fits shows at once; a fresher answer follows.
+    if (now.length) showAs(box, c.index, now);
+    as.timer = setTimeout(function () {
+      S.ask(q).then(function (items) {
+        if (seq === as.seq && document.activeElement === box) showAs(box, c.index, items);
+      }).catch(function () { /* the suggester says what happened */ });
+    }, S.delay());
+  }
+  function attachSuggest(box) {
+    box.setAttribute('aria-autocomplete', 'list');
+    box.setAttribute('aria-controls', 'asugg-list');
+    box.addEventListener('input', function () { if (!as.picking) boxChanged(box); });
+    // While suggestions are showing: arrows choose, Enter or Tab picks, Escape closes.
+    box.addEventListener('keydown', function (e) {
+      if (as.box !== box || $('asugg').hidden) return;
+      var k = e.key;
+      if (k === 'ArrowDown') markAs(Math.min(as.items.length - 1, as.active + 1));
+      else if (k === 'ArrowUp' && as.active >= 0) markAs(as.active - 1);
+      else if ((k === 'Enter' || k === 'Tab') && as.active >= 0) pickAs(as.active);
+      else if (k === 'Escape') closeAs();
+      else return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+    }, true);
+    box.addEventListener('blur', function () { setTimeout(function () { if (as.box === box && document.activeElement !== box) closeAs(); }, 150); });
+  }
+
   // ---------- choosing contacts to import ----------
   var imp = null;   // { name, list: [contact], picked: {index: true}, filter, skipped }
   function startImport(fileName, list) {
@@ -2441,6 +2538,7 @@
     gi.placeholder = 'Groups, like Family, Work'; gi.value = bookEdit.groups; gi.spellcheck = false; gi.autocomplete = 'off';
     gi.setAttribute('aria-label', 'Groups for ' + e.name + ', separated by commas'); gi.setAttribute('list', 'group-names');
     gi.addEventListener('input', function () { bookEdit.groups = gi.value; });
+    attachSuggest(ta); attachSuggest(ta2);
     [ta, ta2, fp, fp2, fe, fe2, gi].forEach(function (x) { x.addEventListener('keydown', function (k) { if (k.key === 'Escape') { bookEdit = null; renderAddress(); } }); });
     [fp, fp2, fe, fe2].forEach(function (x) { x.addEventListener('keydown', function (k) { if (k.key === 'Enter') { k.preventDefault(); saveBookEdit(e.id); } }); });
     gi.addEventListener('keydown', function (k) { if (k.key === 'Enter') { k.preventDefault(); saveBookEdit(e.id); } });
@@ -3235,6 +3333,8 @@
 
   function wireAddress() {
     wireExtras();
+    ['addr-text', 'from-addr', 'to-addr'].forEach(function (id) { attachSuggest($(id)); });
+    window.addEventListener('resize', function () { if (!$('asugg').hidden) closeAs(); });
     // Address labels (with a design)
     $('addr-pick').addEventListener('change', function () {
       loadPicked($('addr-pick').value, $('addr-text'));

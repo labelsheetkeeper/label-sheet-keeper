@@ -11,7 +11,7 @@
            xmlns:ov="http://schemas.microsoft.com/office/taskpaneappversionoverrides"
            xsi:type="TaskPaneApp">
   <Id>8d491c85-a76d-4d26-a6f5-b7b2dd4a1711</Id>
-  <Version>1.10.0.0</Version>
+  <Version>1.11.0.0</Version>
   <ProviderName>Label Sheet Keeper</ProviderName>
   <DefaultLocale>en-US</DefaultLocale>
   <DisplayName DefaultValue="Label Sheet Keeper"/>

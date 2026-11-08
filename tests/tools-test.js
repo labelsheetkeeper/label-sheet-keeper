@@ -97,4 +97,46 @@ let sp = T.rowsToAddresses(T.parseDelimited('Name,Street,City,State,ZIP,Phone,Em
 ok(sp[0].phone === '617-555-0100' && sp[0].email === 'jane@example.com', 'spreadsheet: phone and email columns ' + J(sp[0]));
 let ps = T.rowsToAddresses([['Jane Doe', '', '12 Elm St', '', 'Boston', 'MA', '02108', '', '617-555-0100', 'jane@example.com']]);
 ok(ps[0].phone === '617-555-0100' && ps[0].email === 'jane@example.com', 'no header: phone and email after the address ' + J(ps[0]));
-console.log('all', n, 'tool checks passed');
+
+// ---------- suggestions as you type ----------
+(async () => {
+  const realFetch = globalThis.fetch;
+  const calls = [];
+  let serverStatus = 200;
+  const geo = (h, s, c) => ({ housenumber: h, street: s, city: c, state_code: 'MA', postcode: '02108', country_code: 'us', address_line1: h + ' ' + s, address_line2: c + ', MA 02108' });
+  globalThis.fetch = async (u) => {
+    u = String(u); calls.push(u);
+    if (u.includes('labelsheetkeeper.workers.dev')) {
+      if (serverStatus !== 200) return new Response('{"error":"used up"}', { status: serverStatus });
+      return new Response(JSON.stringify({ results: [geo('8', 'Maple Way', 'Boston'), geo('8', 'Maplewood Ave', 'Salem'), geo('28', 'Maple St', 'Quincy')] }));
+    }
+    if (u.includes('photon.komoot.io')) return new Response(JSON.stringify({ features: [{ properties: { type: 'house', housenumber: '8', street: 'Elm St', city: 'Boston', state: 'Massachusetts', postcode: '02108', countrycode: 'US' } }] }));
+    return new Response('{}', { status: 404 });
+  };
+  const notes = [];
+  const S = T.makeSuggester({ key: () => '', notice: (t) => notes.push(t) });
+  ok(!S.ready('8 M') && S.ready('8 Ma') && !S.ready('Maple'), 'suggestions start at a house number and two letters ("8 Ma")');
+  ok(S.delay() === 150, 'and ask quickly through the server');
+  let got = await S.ask('8 Ma');
+  ok(got.length === 3 && got[0].source === 'geoapify' && calls[0].includes('/suggest?text=8%20Ma'), 'the first answer comes through the server ' + calls[0]);
+  ok(J(S.quick('8 map').map((i) => i.street)) === J(['8 Maple Way', '8 Maplewood Ave']), 'typing on narrows it at once, by the start of each word (not 28 Maple St)');
+  ok(J(S.quick('8 maplew').map((i) => i.street)) === J(['8 Maplewood Ave']) && S.quick('9 elm').length === 0, 'and only to what still fits');
+  ok(J(S.quick('8 map, salem').map((i) => i.street)) === J(['8 Maplewood Ave']), 'a city typed after it narrows it too');
+  const before = calls.length;
+  got = await S.ask('8 ma');
+  ok(calls.length === before && got.length === 3, 'the same question isn’t asked twice');
+  serverStatus = 429;
+  got = await S.ask('9 Elm');
+  ok(got.length === 1 && got[0].source === 'photon' && S.delay() === 300 && !S.ready('9 El'), 'when the shared ones are used up, Photon answers (a little slower, a little more typed first)');
+  const n2 = calls.length;
+  await S.ask('9 Elm S');
+  ok(calls.length === n2 + 1 && calls[n2].includes('photon.komoot.io'), 'and the server isn’t asked again');
+  ok(S.quick('8 map').length === 0, 'answers from the server aren’t mixed in with Photon’s');
+  const K = T.makeSuggester({ key: () => '0123456789abcdef', notice: (t) => notes.push(t) });
+  globalThis.fetch = async (u) => { calls.push(String(u)); return new Response('{"message":"Invalid apiKey"}', { status: 401 }); };
+  let err = null;
+  try { await K.ask('8 Ma'); } catch (e) { err = e; }
+  ok(err && err.status === 401 && !K.keyOk() && /didn’t accept your key/.test(notes[notes.length - 1]), 'a key Geoapify refuses is set aside, and the user is told');
+  globalThis.fetch = realFetch;
+  console.log('all', n, 'tool checks passed');
+})().catch((e) => { console.error(e); process.exit(1); });
