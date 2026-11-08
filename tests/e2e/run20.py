@@ -180,7 +180,8 @@ try:
     n = len(srv2.asked)
     put(pg, '#from-addr', 'Me\n9 Elm St')
     pg.wait_for_timeout(500)
-    check(len(srv2.asked) == n and len(srv2.photon) >= 2, 'and the server isn’t asked again', [len(srv2.asked), n, len(srv2.photon)])
+    check(len(srv2.asked) == n and pg.is_visible('#asugg'), 'and the server isn’t asked again', [len(srv2.asked), n, len(srv2.photon)])
+    check('used up for today' in pg.inner_text('#asugg-credit'), 'the credit line says why Photon is answering', pg.inner_text('#asugg-credit'))
     check(not errs, 'no script errors (shipping sheet)', errs)
     b.close()
 finally:

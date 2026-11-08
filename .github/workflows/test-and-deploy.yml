@@ -198,3 +198,20 @@ jobs:
             429) echo "::notice title=Address suggestions::Used up for today; Photon fills in until tomorrow." ;;
             *) echo "::error title=Address suggestions::The Worker answered $code: $(head -c 300 sugg.json)"; exit 1 ;;
           esac
+
+      # How many shared lookups are used so far today (UTC). Connections are
+      # stored hashed, so only their counts are shown.
+      - name: Count today's address lookups
+        working-directory: worker
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          sql="SELECT who, n FROM usage WHERE day = strftime('%Y-%m-%d','now') ORDER BY n DESC LIMIT 6"
+          if ! out=$(npx --yes wrangler@4.156.2 d1 execute label-sheet-keeper --remote --json --command "$sql" 2> d1.err); then
+            echo "::notice title=Address lookups today::Couldn't read the counts: $(grep -iE 'error|✘' d1.err | head -2 | tr '\n' ' ')"
+            exit 0
+          fi
+          total=$(echo "$out" | jq -r '[.[0].results[] | select(.who == "*") | .n][0] // 0')
+          top=$(echo "$out" | jq -r '[.[0].results[] | select(.who != "*") | .n | tostring] | join(", ")')
+          echo "::notice title=Address lookups today::$total of 2,700 used in all. Busiest connections: ${top:-none} (each may use 300 a day)."

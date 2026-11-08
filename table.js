@@ -166,6 +166,8 @@
       var a = document.createElement('a'); a.href = pair[1]; a.target = '_blank'; a.rel = 'noopener'; a.textContent = pair[0];
       c.appendChild(a);
     });
+    var why = source === 'photon' ? S.why() : '';
+    if (why) c.appendChild(document.createTextNode(' · ' + why));
   }
   function closeSugg() { sugg.hidden = true; suggFor = null; suggItems = []; suggActive = -1; }
   function showSugg(inp, items) {

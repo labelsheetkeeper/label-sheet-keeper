@@ -582,15 +582,31 @@
 
   // ---------- address suggestions as you type ----------
   // One per window. Asks Geoapify with the user's own key, else through the
-  // Label Sheet Keeper server, else Photon (when the others aren't set up, are
-  // busy or used up). Remembers answers, and has the ones that still fit
-  // ready at once while a fresher answer is on its way.
+  // Label Sheet Keeper server, else Photon: until the next day (UTC, the
+  // server's day) when the shared ones are used up, or for a minute when the
+  // server is busy or doesn't answer. Remembers answers, and has the ones
+  // that still fit ready at once while a fresher answer is on its way.
   // opts: { key: () -> the user's own Geoapify key or '', notice: (text) -> void }
   function makeSuggester(opts) {
-    var keyTrouble = false, sharedTrouble = false, pausedUntil = 0, cache = {}, order = [];
+    var keyTrouble = false, sharedUntil = 0, sharedWhy = '', pausedUntil = 0, cache = {}, order = [];
     var notice = function (t) { if (opts && opts.notice) opts.notice(t); };
     function ownKey() { return keyTrouble ? '' : String((opts && opts.key && opts.key()) || ''); }
-    function source() { return ownKey() ? 'key' : sharedTrouble ? 'photon' : 'shared'; }
+    function source() { return ownKey() ? 'key' : Date.now() < sharedUntil ? 'photon' : 'shared'; }
+    function sharedDown(e) {
+      var s = e && e.status, now = new Date(Date.now());
+      if (s === 429) { sharedUntil = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1); sharedWhy = 'used up'; }
+      else { sharedUntil = now.getTime() + 60000; sharedWhy = s ? 'busy' : 'no answer'; }
+    }
+    // Why the suggestions showing come from Photon, in a few words ('' when they don't).
+    function why() {
+      if (source() !== 'photon') return '';
+      return sharedWhy === 'used up' ? 'shared suggestions used up for today' : 'shared suggestions back in a minute';
+    }
+    // The credit line under the suggestions, as plain text.
+    function credit(items) {
+      var photon = !!(items && items[0] && items[0].source === 'photon'), w = photon ? why() : '';
+      return (photon ? 'Photon by Komoot' : 'Powered by Geoapify') + ' · © OpenStreetMap contributors' + (w ? ' · ' + w : '');
+    }
     // Enough typed to ask: a house number and two letters of the street (Photon, shared by everyone, a little more).
     function ready(text) {
       text = String(text || '').trim();
@@ -640,11 +656,14 @@
       if (cache[id]) return Promise.resolve(cache[id]);
       var have = covered(text, text.split(/[\s,]+/).filter(Boolean));
       if (have) return Promise.resolve(have);
+      var from = src;
       var p = src === 'key' ? geoapifySuggest(q, ownKey())
-        : src === 'shared' ? sharedSuggest(q).catch(function () { sharedTrouble = true; return photonSuggest(q); })
+        : src === 'shared' ? sharedSuggest(q).catch(function (e) { sharedDown(e); from = 'photon'; return photonSuggest(q); })
           : photonSuggest(q);
       return p.then(function (items) {
-        cache[id] = items; order.push(id);
+        // Kept under where the answer came from, so Photon's never stand in for the shared ones.
+        var k = from + ':' + text;
+        cache[k] = items; order.push(k);
         if (order.length > 60) delete cache[order.shift()];
         return items;
       }, function (e) {
@@ -655,7 +674,10 @@
         throw e;
       });
     }
-    return { ready: ready, delay: delay, quick: quick, ask: ask, keyOk: function () { return !keyTrouble; } };
+    return {
+      ready: ready, delay: delay, quick: quick, ask: ask, why: why, credit: credit, source: source,
+      keyOk: function () { return !keyTrouble; }
+    };
   }
   var PHOTON = 'https://photon.komoot.io/api/?limit=8&lang=en&layer=house&layer=street&countrycode=US&countrycode=CA&q=';
   function photonSuggest(text) {

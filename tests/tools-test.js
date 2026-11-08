@@ -140,6 +140,25 @@ ok(ps[0].phone === '617-555-0100' && ps[0].email === 'jane@example.com', 'no hea
   await S.ask('9 Elm S');
   ok(calls.length === n2 + 1 && calls[n2].includes('photon.komoot.io'), 'and the server isn’t asked again');
   ok(S.quick('8 map').length === 0, 'answers from the server aren’t mixed in with Photon’s');
+  ok(/Photon by Komoot/.test(S.credit(got)) && /used up for today/.test(S.credit(got)), 'the credit says why Photon is answering: ' + S.credit(got));
+  const realNow = Date.now;
+  try {
+    const t0 = realNow();
+    Date.now = () => t0 + 26 * 3600 * 1000;
+    serverStatus = 200;
+    ok(S.delay() === 250 && S.source() === 'shared', 'the next day the shared suggestions are used again');
+    const n3 = calls.length;
+    got = await S.ask('9 Elm St');
+    ok(calls[n3].includes('/suggest?') && got[0].source === 'geoapify', 'and asked first again', calls.slice(n3));
+    ok(S.quick('9 elm').every((i) => i.source === 'geoapify'), 'Photon’s answers never stand in for the shared ones');
+    // Busy, or no answer: Photon for a minute only.
+    serverStatus = 503;
+    await S.ask('5 Oak Rd');
+    ok(S.source() === 'photon' && /back in a minute/.test(S.why()), 'when the server is busy, Photon answers for now: ' + S.why());
+    const t1 = Date.now();
+    Date.now = () => t1 + 61 * 1000;
+    ok(S.source() === 'shared' && S.why() === '', 'and a minute later the shared ones are tried again');
+  } finally { Date.now = realNow; }
   const K = T.makeSuggester({ key: () => '0123456789abcdef', notice: (t) => notes.push(t) });
   ok(K.delay() === 200, 'with their own key, asks after a fifth of a second');
   globalThis.fetch = async (u) => { calls.push(String(u)); return new Response('{"message":"Invalid apiKey"}', { status: 401 }); };
