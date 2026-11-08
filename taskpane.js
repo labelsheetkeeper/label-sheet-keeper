@@ -11,7 +11,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.9';
+  var VERSION = '1.10';
   var ADDIN_ID = '8d491c85-a76d-4d26-a6f5-b7b2dd4a1711';   // must match manifest.xml <Id>
   var F = window.LSK_FORMATS;
   var S = window.LSK_SHEET;

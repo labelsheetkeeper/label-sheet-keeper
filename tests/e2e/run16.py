@@ -45,6 +45,8 @@ def fake_services(page):
     page.route('https://photon.komoot.io/**', photon)
     page.route('https://api.zippopotam.us/**', zippo)
     page.route('https://api.geoapify.com/**', geo)
+    # The Label Sheet Keeper server without a Geoapify key set up: suggestions fall back to Photon.
+    page.route('https://api.labelsheetkeeper.workers.dev/**', lambda r: r.fulfill(status=503, headers={'Access-Control-Allow-Origin': '*'}, json={'error': 'not set up'}))
 
 def new_page(b, query, scheme='light'):
     pg = b.new_page(viewport={'width': 340, 'height': 1000}, color_scheme=scheme)

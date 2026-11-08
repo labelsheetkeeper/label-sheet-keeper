@@ -179,3 +179,14 @@ jobs:
           code=$(curl -s -o /dev/null -w '%{http_code}' -X POST --data-binary @"$PDF" "$WORKER_URL/drop/$box")
           [ "$code" = "404" ] || fail "An unlinked sending address still answered $code"
           echo "::notice title=Phone mailbox check::A label went through the live Worker and back, then everything was deleted."
+
+      # Address suggestions for everyone: works once the GEOAPIFY_KEY secret is saved in Cloudflare.
+      - name: Check address suggestions
+        run: |
+          code=$(curl -s -o sugg.json -w '%{http_code}' -H 'Origin: https://labelsheetkeeper.github.io' "$WORKER_URL/suggest?text=1%20Beacon%20St%2C%20Boston")
+          case "$code" in
+            200) echo "::notice title=Address suggestions::Working: $(jq -r '[.results[].address_line1] | join("; ")' sugg.json)" ;;
+            503) echo "::notice title=Address suggestions::Not set up yet ($(jq -r .error sugg.json)). The table window uses Photon until the GEOAPIFY_KEY secret is saved." ;;
+            429) echo "::notice title=Address suggestions::Used up for today; Photon fills in until tomorrow." ;;
+            *) echo "::error title=Address suggestions::The Worker answered $code: $(head -c 300 sugg.json)"; exit 1 ;;
+          esac

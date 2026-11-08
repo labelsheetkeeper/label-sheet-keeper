@@ -231,6 +231,44 @@ try:
     rows = tp.evaluate("LSK_TABLE.readRows()")
     check(rows[2][0] == 'Sam Lee' and rows[2][7] == '978-555-0123' and rows[2][8] == 'sam@example.com', 'with phones and emails', rows)
     tp.screenshot(path=OUT + '/v19-table.png')
+    # Address suggestions for everyone: Geoapify through the server, Photon when that's used up.
+    asked = []
+    server = {'status': 200}
+    def worker_route(route):
+        asked.append(route.request.url)
+        if server['status'] != 200:
+            return route.fulfill(status=server['status'], headers={'Access-Control-Allow-Origin': '*'}, json={'error': 'Address suggestions are used up for today.'})
+        route.fulfill(headers={'Access-Control-Allow-Origin': '*'}, json={'results': [
+            {'housenumber': '8', 'street': 'Maple Way', 'city': 'Boston', 'state_code': 'MA', 'postcode': '02108', 'country_code': 'us', 'address_line1': '8 Maple Way', 'address_line2': 'Boston, MA 02108'}]})
+    photon_asked = []
+    def photon_route(route):
+        photon_asked.append(route.request.url)
+        route.fulfill(json={'type': 'FeatureCollection', 'features': [
+            {'type': 'Feature', 'properties': {'type': 'house', 'housenumber': '9', 'street': 'Elm Street', 'city': 'Salem', 'state': 'Massachusetts', 'postcode': '01970', 'countrycode': 'US'}}]})
+    tp.route('https://api.labelsheetkeeper.workers.dev/**', worker_route)
+    tp.route('https://photon.komoot.io/**', photon_route)
+    tp.route('https://api.geoapify.com/**', lambda r: (asked.append('DIRECT ' + r.request.url), r.fulfill(status=500, json={})))
+    tp.evaluate("localStorage.removeItem('lsk.geoKey')")
+    tp.reload(); tp.wait_for_timeout(300)
+    tp.click('#more')
+    street_at = lambda i: tp.evaluate("i => { const r = document.querySelectorAll('#rows tr.row'); const el = r[i].querySelector('input[aria-label=street]'); r[i].querySelectorAll('input').forEach(x => x.value = ''); el.focus(); return r.length; }", i)
+    street_at(4)
+    tp.keyboard.type('8 Maple')
+    check(wait(tp, "!document.getElementById('sugg').hidden && document.querySelectorAll('#sugg-list button').length === 1"), 'without a key of your own, suggestions come through the Label Sheet Keeper server')
+    check(asked and asked[0].startswith('https://api.labelsheetkeeper.workers.dev/suggest?text=8%20Maple') and not any(a.startswith('DIRECT') for a in asked), 'the table window never needs Geoapify’s key itself', asked)
+    check('Powered by Geoapify' in tp.inner_text('#sugg') and 'OpenStreetMap' in tp.inner_text('#sugg'), 'and credit Geoapify and OpenStreetMap', tp.inner_text('#sugg'))
+    tp.keyboard.press('ArrowDown'); tp.keyboard.press('Enter')
+    vals = tp.evaluate("Array.from(document.querySelectorAll('#rows tr.row')[4].querySelectorAll('input')).map(i => i.value)")
+    check(vals[2] == '8 Maple Way' and vals[4] == 'Boston' and vals[5] == 'MA' and vals[6] == '02108', 'picking one fills the row', vals)
+    server['status'] = 429
+    street_at(5)
+    tp.keyboard.type('9 Elm St')
+    check(wait(tp, "!document.getElementById('sugg').hidden && document.getElementById('sugg').textContent.indexOf('Photon') >= 0"), 'when the shared ones are used up for the day, Photon takes over', tp.inner_text('#sugg') if tp.is_visible('#sugg') else '')
+    n_asked = len(asked)
+    tp.keyboard.press('Escape')
+    street_at(6)
+    tp.keyboard.type('9 Elm Ave')
+    check(wait(tp, "!document.getElementById('sugg').hidden") and len(asked) == n_asked and len(photon_asked) >= 2, 'and the server isn’t asked again that session', [len(asked), n_asked, len(photon_asked)])
     check(not terrs, 'no script errors (table)', terrs)
     tp.close()
 

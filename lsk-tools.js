@@ -507,19 +507,23 @@
   // OpenStreetMap data. Resolves to [{ label, sub, street, city, state, zip,
   // country, source }]; rejects with err.status (401/403: bad key, 429: too many).
   function suggestAddresses(text, key) { return key ? geoapifySuggest(text, key) : photonSuggest(text); }
-  function geoapifySuggest(text, key) {
-    return fetchJson(GEO + '&limit=5&filter=countrycode:us,ca&text=' + encodeURIComponent(text) + '&apiKey=' + encodeURIComponent(key)).then(function (j) {
-      return ((j && j.results) || []).filter(function (r) { return r.street || r.address_line1; }).map(function (r) {
-        var country = String(r.country_code || '').toUpperCase() === 'CA' ? 'CA' : 'US';
-        var street = r.street ? [r.housenumber, r.street].filter(Boolean).join(' ') : String(r.address_line1 || '');
-        return {
-          label: r.address_line1 || street, sub: r.address_line2 || '', street: street, city: r.city || '',
-          state: String(r.state_code || '').toUpperCase(), zip: country === 'CA' ? fixPostal(r.postcode) : String(r.postcode || ''),
-          country: country, source: 'geoapify'
-        };
-      });
+  function geoapifyItems(j) {
+    return ((j && j.results) || []).filter(function (r) { return r.street || r.address_line1; }).map(function (r) {
+      var country = String(r.country_code || '').toUpperCase() === 'CA' ? 'CA' : 'US';
+      var street = r.street ? [r.housenumber, r.street].filter(Boolean).join(' ') : String(r.address_line1 || '');
+      return {
+        label: r.address_line1 || street, sub: r.address_line2 || '', street: street, city: r.city || '',
+        state: String(r.state_code || '').toUpperCase(), zip: country === 'CA' ? fixPostal(r.postcode) : String(r.postcode || ''),
+        country: country, source: 'geoapify'
+      };
     });
   }
+  function geoapifySuggest(text, key) {
+    return fetchJson(GEO + '&limit=5&filter=countrycode:us,ca&text=' + encodeURIComponent(text) + '&apiKey=' + encodeURIComponent(key)).then(geoapifyItems);
+  }
+  // Geoapify through the Label Sheet Keeper server, which holds a key for everyone.
+  var SERVER = 'https://api.labelsheetkeeper.workers.dev';
+  function sharedSuggest(text) { return fetchJson(SERVER + '/suggest?text=' + encodeURIComponent(text), 5000).then(geoapifyItems); }
   var PHOTON = 'https://photon.komoot.io/api/?limit=8&lang=en&layer=house&layer=street&countrycode=US&countrycode=CA&q=';
   function photonSuggest(text) {
     // A street without that house number in the map still gets the number typed.
@@ -809,7 +813,7 @@
     parseDelimited: parseDelimited, readXlsx: readXlsx, parseVCard: parseVCard,
     headerMap: headerMap, rowsToAddresses: rowsToAddresses, rowsToContacts: rowsToContacts, addressLines: addressLines, fixZip: fixZip, linesToFields: linesToFields,
     fontCss: fontCss, textHeight: textHeight, fits: fits, fitScale: fitScale, findLabelBorder: findLabelBorder,
-    unwrapTable: unwrapTable, countryOf: countryOf, fixPostal: fixPostal, regionCode: regionCode, lookupPostal: lookupPostal, suggestAddresses: suggestAddresses,
+    unwrapTable: unwrapTable, countryOf: countryOf, fixPostal: fixPostal, regionCode: regionCode, lookupPostal: lookupPostal, suggestAddresses: suggestAddresses, sharedSuggest: sharedSuggest,
     reorderLink: reorderLink, numberText: numberText, qrMatrix: qrMatrix, code128: code128, findGrid: findGrid, alignFromScan: alignFromScan,
     MARK: MARK, markSpots: markSpots, findMarks: findMarks, alignFromMarks: alignFromMarks,
     FIELDS: FIELDS, PROVINCES: PROVINCES

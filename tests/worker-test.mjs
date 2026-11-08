@@ -17,7 +17,12 @@ const ok = (c, m) => { assert(c, m); n++; };
 class Stmt {
   constructor(db, sql, args) { this.db = db; this.sql = sql; this.args = args || []; }
   bind(...args) { return new Stmt(this.db, this.sql, args); }
-  runNow() { const r = this.db.prepare(this.sql).run(...this.args); return { success: true, meta: { changes: Number(r.changes) } }; }
+  runNow() {
+    const s = this.db.prepare(this.sql);
+    if (/\bRETURNING\b/i.test(this.sql)) return { success: true, results: s.all(...this.args).map((r) => ({ ...r })) };
+    const r = s.run(...this.args);
+    return { success: true, meta: { changes: Number(r.changes) } };
+  }
   async run() { return this.runNow(); }
   async first() { const r = this.db.prepare(this.sql).get(...this.args); return r === undefined ? null : { ...r }; }
   async all() { return { results: this.db.prepare(this.sql).all(...this.args).map((r) => ({ ...r })) }; }
@@ -142,5 +147,46 @@ r = await call('/drop/' + link.box, { method: 'POST', body: pdf });
 ok(r.status === 404 && db.rows('SELECT box FROM boxes WHERE box = ?', link.box).length === 0, 'the old sending link stops working at once, and doesn’t bring the mailbox back');
 r = await call('/box/' + link.box, { headers: auth });
 ok(r.status === 401, 'and the old read key no longer works');
+
+// ---- address suggestions for everyone ----
+const realFetch = globalThis.fetch;
+let geoCalls = [], geoReply = () => new Response(JSON.stringify({ results: [
+  { housenumber: '8', street: 'Maple Way', city: 'Boston', state_code: 'MA', postcode: '02108', country_code: 'us', address_line1: '8 Maple Way', address_line2: 'Boston, MA 02108', lat: 42.3, lon: -71.1, place_id: 'x' }] }), { status: 200 });
+globalThis.fetch = async (u) => { geoCalls.push(String(u)); return geoReply(); };
+const ask = (text, headers = { Origin: PANEL, 'CF-Connecting-IP': '203.0.113.7' }) => call('/suggest?text=' + encodeURIComponent(text), { headers });
+r = await ask('8 Maple');
+ok(r.status === 503 && geoCalls.length === 0, 'without a Geoapify key set up, suggestions say so and nothing is asked');
+env.GEOAPIFY_KEY = 'secret-geo-key';
+r = await ask('8 Maple', { Origin: 'https://example.com' });
+ok(r.status === 403 && geoCalls.length === 0, 'only the panel can ask for suggestions');
+r = await ask('8');
+ok(r.status === 400, 'a too-short question is refused');
+r = await ask('8   Maple ');
+body = await r.json();
+ok(r.status === 200 && body.results.length === 1 && body.results[0].street === 'Maple Way' && body.results[0].postcode === '02108', 'suggestions come back ' + JSON.stringify(body));
+ok(body.results[0].lat === undefined && body.results[0].place_id === undefined && !JSON.stringify(body).includes('secret-geo-key'), 'with only the address parts, and never the key');
+ok(geoCalls.length === 1 && geoCalls[0].includes('text=8%20Maple&') && geoCalls[0].includes('filter=countrycode:us,ca') && geoCalls[0].includes('apiKey=secret-geo-key'), 'Geoapify is asked for US and Canada with the shared key ' + geoCalls[0]);
+ok(r.headers.get('Access-Control-Allow-Origin') === PANEL, 'the table window may read the answer');
+const used = db.rows('SELECT who, n FROM usage');
+ok(used.length === 2 && used.every((u) => u.n === 1) && used.some((u) => u.who === '*') && !used.some((u) => u.who.includes('203.0.113.7')), 'each question is counted, by a hash of the address, not the address itself ' + JSON.stringify(used));
+db.db.prepare("UPDATE usage SET n = 300 WHERE who <> '*'").run();
+r = await ask('9 Maple');
+ok(r.status === 429 && geoCalls.length === 1, 'one internet address gets at most 300 a day');
+r = await ask('9 Maple', { Origin: PANEL, 'CF-Connecting-IP': '198.51.100.2' });
+ok(r.status === 200, 'others still get theirs');
+db.db.prepare("UPDATE usage SET n = 2700 WHERE who = '*'").run();
+r = await ask('10 Maple', { Origin: PANEL, 'CF-Connecting-IP': '198.51.100.9' });
+ok(r.status === 429, 'everyone together gets at most 2,700 a day, under Geoapify’s free 3,000');
+db.db.prepare('DELETE FROM usage').run();
+geoReply = () => new Response('{"message":"Invalid apiKey"}', { status: 401 });
+r = await ask('11 Maple');
+ok(r.status === 503, 'a key Geoapify refuses counts as not set up');
+geoReply = () => new Response('{}', { status: 429 });
+r = await ask('12 Maple');
+ok(r.status === 429, 'Geoapify’s own limit is passed on');
+geoReply = () => { throw new Error('offline'); };
+r = await ask('13 Maple');
+ok(r.status === 503 && /busy/.test((await r.json()).error), 'no connection to Geoapify says busy');
+globalThis.fetch = realFetch;
 
 console.log('all', n, 'worker checks passed');

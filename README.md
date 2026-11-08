@@ -85,7 +85,9 @@ Labels you send show up on shipping-label sheets as "1 label from your phone." *
 
 In the table window, type a house number and street, and the panel suggests matching US and Canadian addresses. Pick one to fill in the street, city, state or province, and ZIP or postal code. A ZIP code or postal code on its own also fills in the city (using the free Zippopotam.us service).
 
-Suggestions come from [Photon by Komoot](https://photon.komoot.io/), a free service with no sign-up, using [OpenStreetMap](https://www.openstreetmap.org/copyright) data. What you type is sent to Photon. Photon is shared by everyone, so it asks for light use, and some house numbers aren't in OpenStreetMap yet. Turn suggestions off in **Settings › Address suggestions**.
+Suggestions come from [Geoapify](https://www.geoapify.com/) through the Label Sheet Keeper server (the Worker in `worker/`), which holds one Geoapify key for everyone, so you don't need one. Everyone together gets up to 2,700 a day, and one internet address up to 300. When they're used up, or the server is busy, suggestions come from [Photon by Komoot](https://photon.komoot.io/) instead, a free service with no sign-up. Both use [OpenStreetMap](https://www.openstreetmap.org/copyright) data, and what you type is sent to them. Turn suggestions off in **Settings › Address suggestions**.
+
+The shared key is a Worker secret named `GEOAPIFY_KEY`, saved in the Cloudflare dashboard (**Workers & Pages › api › Settings › Variables and Secrets**), never in this repository. Its Geoapify restrictions are left empty, because the Worker asks Geoapify directly rather than from a browser.
 
 **Bring your own key (optional).** For your own daily allowance, use a free Geoapify key instead:
 
@@ -94,7 +96,7 @@ Suggestions come from [Photon by Komoot](https://photon.komoot.io/), a free serv
 3. In the key's settings, add `https://labelsheetkeeper.github.io` as an allowed origin (or HTTP referrer), so the key only works from this add-in.
 4. In Word, open the panel, then **Settings › Address suggestions**. Paste the key and click **Save key**.
 
-The key is kept by the panel on your Mac only, not in this repository or in your Word documents. With a key, suggestions go to Geoapify instead of Photon. On another Mac, paste the key there too.
+The key is kept by the panel on your Mac only, not in this repository or in your Word documents. With a key, suggestions go straight to Geoapify on your own allowance instead of the shared one. On another Mac, paste the key there too.
 
 ### Canadian addresses
 

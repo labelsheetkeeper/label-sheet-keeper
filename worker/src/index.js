@@ -13,11 +13,16 @@
 //   DELETE /box/<box>/<id>       picked up                               (read key)
 //   DELETE /box/<box>            unlink: the mailbox and its labels      (read key)
 //
+// Address suggestions for everyone: the Worker asks Geoapify with the
+// GEOAPIFY_KEY secret, so nobody needs a key of their own.
+//
+//   GET    /suggest?text=…       up to 5 US and Canadian addresses       (panel only)
+//
 // Storage: mailboxes and the list of labels waiting are in the DB database
 // (D1, always up to date). Each label's bytes are in the LABELS KV namespace
 // as "file:<box>:<id>", written once and read once, and expire on their own.
 
-const VERSION = '0.3.0';
+const VERSION = '0.4.0';
 
 // Only the panel's own address may call the Worker from a browser.
 const ALLOWED_ORIGINS = ['https://labelsheetkeeper.github.io'];
@@ -28,6 +33,11 @@ const MAX_PER_DAY = 60;               // labels sent to one mailbox per day
 const KEEP_SECONDS = 7 * 24 * 3600;   // a label not picked up is deleted after this
 const ARRIVING_MS = 5 * 60 * 1000;    // a new label's file can take a moment to reach every Cloudflare location
 
+const SUGGEST_PER_DAY = 2700;         // for everyone together: Geoapify's free plan allows 3,000 a day
+const SUGGEST_PER_PERSON = 300;       // for one internet address a day
+const GEO_URL = 'https://api.geoapify.com/v1/geocode/autocomplete?format=json&lang=en&limit=5&filter=countrycode:us,ca&text=';
+const GEO_KEEP = ['housenumber', 'street', 'address_line1', 'address_line2', 'city', 'state_code', 'postcode', 'country_code'];
+
 const BOX_RE = /^[A-Za-z0-9_-]{22}$/;
 const ID_RE = /^[A-Za-z0-9_-]{16}$/;
 
@@ -35,7 +45,9 @@ const EXT = { 'application/pdf': 'pdf', 'image/png': 'png', 'image/jpeg': 'jpg',
 
 const SCHEMA = [
   'CREATE TABLE IF NOT EXISTS boxes (box TEXT PRIMARY KEY, key TEXT NOT NULL, created INTEGER NOT NULL, day TEXT NOT NULL DEFAULT \'\', sent INTEGER NOT NULL DEFAULT 0)',
-  'CREATE TABLE IF NOT EXISTS labels (box TEXT NOT NULL, id TEXT NOT NULL, type TEXT NOT NULL, name TEXT NOT NULL, size INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (box, id))'
+  'CREATE TABLE IF NOT EXISTS labels (box TEXT NOT NULL, id TEXT NOT NULL, type TEXT NOT NULL, name TEXT NOT NULL, size INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (box, id))',
+  // Suggestions asked today: who is "*" for everyone, or a one-day hash of an internet address.
+  'CREATE TABLE IF NOT EXISTS usage (day TEXT NOT NULL, who TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, who))'
 ];
 let schemaReady = null;
 function ready(env) {
@@ -195,8 +207,35 @@ async function boxRoute(request, env, box, id, origin) {
   return json({ error: 'method not allowed' }, 405, origin);
 }
 
+async function suggest(request, env, url, origin, ctx) {
+  if (!ALLOWED_ORIGINS.includes(origin)) return json({ error: 'Address suggestions are for the Label Sheet Keeper panel.' }, 403, origin);
+  if (!env.GEOAPIFY_KEY) return json({ error: 'not set up' }, 503, origin);
+  const text = (url.searchParams.get('text') || '').trim().replace(/\s+/g, ' ').slice(0, 200);
+  if (text.length < 3) return json({ error: 'Type a little more.' }, 400, origin);
+
+  const today = new Date().toISOString().slice(0, 10);
+  const who = (await sha256((request.headers.get('CF-Connecting-IP') || 'unknown') + '|' + today)).slice(0, 32);
+  const count = 'INSERT INTO usage (day, who, n) VALUES (?, ?, 1) ON CONFLICT (day, who) DO UPDATE SET n = n + 1 RETURNING n';
+  const [all, mine] = await env.DB.batch([env.DB.prepare(count).bind(today, '*'), env.DB.prepare(count).bind(today, who)]);
+  if (ctx && Math.random() < 0.02) ctx.waitUntil(env.DB.prepare('DELETE FROM usage WHERE day < ?').bind(today).run());
+  if (all.results[0].n > SUGGEST_PER_DAY || mine.results[0].n > SUGGEST_PER_PERSON) return json({ error: 'Address suggestions are used up for today.' }, 429, origin);
+
+  let r;
+  try { r = await fetch(GEO_URL + encodeURIComponent(text) + '&apiKey=' + encodeURIComponent(env.GEOAPIFY_KEY)); } catch (e) { return json({ error: 'Address suggestions are busy.' }, 503, origin); }
+  if (r.status === 401 || r.status === 403) return json({ error: 'not set up' }, 503, origin);
+  if (r.status === 429) return json({ error: 'Address suggestions are used up for today.' }, 429, origin);
+  if (!r.ok) return json({ error: 'Address suggestions are busy.' }, 503, origin);
+  const j = await r.json().catch(() => ({}));
+  const results = ((j && j.results) || []).slice(0, 5).map((x) => {
+    const o = {};
+    GEO_KEEP.forEach((k) => { if (x[k] !== undefined && x[k] !== null) o[k] = x[k]; });
+    return o;
+  });
+  return json({ results }, 200, origin);
+}
+
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     const url = new URL(request.url);
     const origin = request.headers.get('Origin') || '';
     const parts = url.pathname.split('/').filter(Boolean);
@@ -219,6 +258,10 @@ export default {
       }
       if (parts[0] === 'box' && (parts.length === 2 || parts.length === 3)) {
         return await boxRoute(request, env, parts[1], parts[2] || '', origin);
+      }
+      if (parts[0] === 'suggest' && parts.length === 1) {
+        if (request.method !== 'GET') return json({ error: 'method not allowed' }, 405, origin);
+        return await suggest(request, env, url, origin, ctx);
       }
       return json({ error: 'not found' }, 404, origin);
     } catch (e) {
