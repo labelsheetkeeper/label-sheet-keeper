@@ -18,7 +18,8 @@ python3 tests/e2e/run17.py         # alignment squares, recent addresses, groups
 python3 tests/e2e/run18.py         # linking a phone, labels sent from it, the phone page
 python3 tests/e2e/run19.py         # phone, email and second addresses; choosing contacts to import
 python3 tests/e2e/run20.py         # address suggestions in the panel's address boxes
-npx eslint -c tests/eslint.config.cjs taskpane.js table.js lsk-tools.js sheetdoc.js
+python3 tests/e2e/run21.py         # label text where Word puts it, suggestions on labels, print preview
+npx eslint -c tests/eslint.config.cjs taskpane.js table.js lsk-tools.js sheetdoc.js preview.js
 ```
 
-Each script ends with "N checks, 0 failed" and exits with an error if any check failed. Screenshots and files they make go in `tests/out/`, which isn't committed. Each script serves the repository on its own local port (8790, 8791, 8794 to 8798).
+Each script ends with "N checks, 0 failed" and exits with an error if any check failed. Screenshots and files they make go in `tests/out/`, which isn't committed. Each script serves the repository on its own local port (8790, 8791, 8794 to 8799).

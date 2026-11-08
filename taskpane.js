@@ -11,7 +11,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.11';
+  var VERSION = '1.12';
   var ADDIN_ID = '8d491c85-a76d-4d26-a6f5-b7b2dd4a1711';   // must match manifest.xml <Id>
   var F = window.LSK_FORMATS;
   var S = window.LSK_SHEET;
@@ -30,13 +30,13 @@
   };
   // Stored on this Mac
   var LS = {
-    from: 'lsk.fromAddress', autoMark: 'lsk.autoMark', side: 'lsk.side.', fillTab: 'lsk.fillTab', shipTab: 'lsk.shipTab',
+    from: 'lsk.fromAddress', autoMark: 'lsk.markWithoutAsking', side: 'lsk.side.', fillTab: 'lsk.fillTab', shipTab: 'lsk.shipTab',
     addinRef: 'lsk.addinRef', feedArrow: 'lsk.feedArrow', tripLimit: 'lsk.tripLimit', nudge: 'lsk.nudge.', testCheck: 'lsk.testCheck.',
     warnPass: 'lsk.warnPassHidden', last: 'lsk.last.', book: 'lsk.addressBook', design: 'lsk.design', logo: 'lsk.logo',
     custom: 'lsk.customFormats', sheets: 'lsk.sheets', tableInfo: 'lsk.tableInfo', tableDraft: 'lsk.tableDraft',
     home: 'lsk.homeCountry', geoKey: 'lsk.geoKey', suggest: 'lsk.suggest',
     stock: 'lsk.stock.', fillJob: 'lsk.fillJob', testNudge: 'lsk.testNudge.', codes: 'lsk.codes',
-    recent: 'lsk.recent', saved: 'lsk.savedLabels', showSaved: 'lsk.showSaved', phone: 'lsk.phone'
+    recent: 'lsk.recent', saved: 'lsk.savedLabels', showSaved: 'lsk.showSaved', phone: 'lsk.phone', preview: 'lsk.preview'
   };
   // The Label Sheet Keeper server (a Cloudflare Worker, see worker/).
   var API = 'https://api.labelsheetkeeper.workers.dev';
@@ -163,7 +163,7 @@
 
   // Per-Mac settings
   function feedArrowOn() { return store(LS.feedArrow) !== 'off'; }
-  function autoMarkOn() { return store(LS.autoMark) !== 'off'; }
+  function autoMarkOn() { return store(LS.autoMark) === 'on'; }
   // Labels printed on sheets that already had used labels. The count keeps
   // going while it's hidden, so it's right when it's shown again.
   function savedCount() { var c = Number(store(LS.saved)); return isFinite(c) && c > 0 ? Math.round(c) : 0; }
@@ -222,8 +222,9 @@
     if (window.console) console.error(e, e && e.debugInfo);
   }
   // alt: { label, action } for a second choice next to the main button.
-  function ask(msg, yesLabel, action, danger, alt) {
+  function ask(msg, yesLabel, action, danger, alt, noLabel) {
     pendingConfirm = action;
+    $('confirm-no').textContent = noLabel || 'Cancel';
     pendingAlt = alt ? alt.action : null;
     $('confirm-alt').hidden = !alt;
     $('confirm-alt').textContent = alt ? alt.label : '';
@@ -337,12 +338,13 @@
       height: rowHeightIn(f) * 72 - (f.align === 'top' ? 0.12 * 72 : 4)
     };
   }
-  var PARA_PROPS = 'items/text,items/font/name,items/font/size,items/font/bold,items/font/italic,items/spaceBefore,items/spaceAfter,items/leftIndent,items/lineSpacing';
+  var PARA_PROPS = 'items/text,items/font/name,items/font/size,items/font/bold,items/font/italic,items/alignment,items/spaceBefore,items/spaceAfter,items/leftIndent,items/rightIndent,items/firstLineIndent,items/lineSpacing';
   function paraSpecs(items, f) {
     return items.map(function (p) {
       return {
         text: p.text, font: p.font.name || f.font.name, size: p.font.size || f.font.size, bold: !!p.font.bold, italic: !!p.font.italic,
-        before: p.spaceBefore || 0, after: p.spaceAfter || 0, indent: Math.max(0, p.leftIndent || 0), lineSpacing: p.lineSpacing || 12
+        align: p.alignment || 'Left', before: p.spaceBefore || 0, after: p.spaceAfter || 0, indent: Math.max(0, p.leftIndent || 0),
+        right: Math.max(0, p.rightIndent || 0), first: p.firstLineIndent || 0, lineSpacing: p.lineSpacing || 12
       };
     });
   }
@@ -420,10 +422,15 @@
               return p;
             });
             return ctx.sync().then(function () {
-              var over = {}, box = textBox(fmt);
-              check.forEach(function (k, i) { try { if (!T.fits(paraSpecs(lists[i].items, fmt), box, measure)) over[k] = true; } catch (e) { /* skip */ } });
+              var over = {}, specs = {}, box = textBox(fmt);
+              check.forEach(function (k, i) {
+                try {
+                  specs[k] = paraSpecs(lists[i].items, fmt);
+                  if (!T.fits(specs[k], box, measure)) over[k] = true;
+                } catch (e) { /* skip */ }
+              });
               base.kind = 'sheet';
-              base.used = used; base.ready = ready; base.texts = texts; base.pics = picsAt; base.over = over; base.here = here;
+              base.used = used; base.ready = ready; base.texts = texts; base.pics = picsAt; base.over = over; base.here = here; base.specs = specs;
               return base;
             });
           });
@@ -444,6 +451,7 @@
       syncHeader();
       tidyEdges();
       setTimeout(checkFillJob, 300);
+      previewSoon();
     } else if (s.kind !== 'broken') st.fmt = null;
     render();
   }
@@ -453,6 +461,7 @@
   function onSelectionChanged() {
     clearTimeout(selTimer);
     selTimer = setTimeout(function () { if (!busy) refresh(); }, 400);
+    docLineSoon();
   }
 
   // ---------- the "▲ top" mark in the sheet's blank top strip ----------
@@ -1081,9 +1090,11 @@
   }
 
   // ---------- noticing prints ----------
-  // Word stamps a "last printed" time on the document when it prints. The
-  // panel checks it every few seconds; when it moves forward, the labels that
-  // were ready to print have just been printed.
+  // Word stamps a "last printed" time on the document when it sends it to
+  // print (that includes Save as PDF, and a print the printer then drops).
+  // The panel checks it every few seconds; when it moves forward, it asks
+  // whether the labels that were ready came out, unless the user chose to
+  // mark them without asking.
   var lastPrintSeen = null, watchTimer = 0;
   function readPrintTime() {
     return Word.run(function (ctx) {
@@ -1122,15 +1133,17 @@
       var nums = keys(st.ready);
       if (!nums.length) return;
       var when = timeOnly(ms) ? ' at ' + timeOnly(ms) : '';
-      var doMark = function () {
+      var doMark = function (asked) {
         queueChange(markPrinted).then(function (done) {
           return refresh().then(function () {
-            say('Word printed this sheet' + when + ', so ' + labelList(done) + (done.length === 1 ? ' is' : ' are') + ' now marked used.');
+            var are = done.length === 1 ? ' is' : ' are';
+            say(asked ? cap(labelList(done)) + are + ' now marked used.'
+              : 'Word sent this sheet to print' + when + ', so ' + labelList(done) + are + ' now marked used.');
           });
         });
       };
-      if (autoMarkOn()) doMark();
-      else ask('Word printed this sheet' + when + '. Mark ' + labelList(nums) + ' used?', 'Mark used', doMark);
+      if (autoMarkOn()) doMark(false);
+      else ask('Word sent this sheet to print' + when + '. Did ' + labelList(nums) + ' print?', 'Yes, mark used', function () { doMark(true); }, false, null, 'No');
     });
   }
   function startPrintWatch() {
@@ -1780,6 +1793,116 @@
   }
   function closeTable() { try { if (tableDlg) tableDlg.close(); } catch (e) { /* already closed */ } tableDlg = null; }
 
+  // ---------- the preview window ----------
+  // Shows the page as it will print: each label's edge (which doesn't print),
+  // the used labels shaded, and the text and pictures where Word puts them.
+  // While it's open it follows changes to the sheet.
+  var previewDlg = null, previewTimer = 0, previewPics = {};
+  // A picture from the document, made small enough to keep on this Mac for the window.
+  function shrinkPicture(b64, max) {
+    var type = /^\/9j\//.test(b64) ? 'jpeg' : /^R0lG/.test(b64) ? 'gif' : 'png';
+    return new Promise(function (resolve) {
+      var img = new Image();
+      img.onload = function () {
+        try {
+          var w = img.naturalWidth || 1, h = img.naturalHeight || 1, k = Math.min(1, max / Math.max(w, h));
+          var c = document.createElement('canvas');
+          c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+          var x = c.getContext('2d');
+          x.fillStyle = '#fff'; x.fillRect(0, 0, c.width, c.height);
+          x.drawImage(img, 0, 0, c.width, c.height);
+          resolve(c.toDataURL('image/jpeg', 0.85));
+        } catch (e) { resolve(''); }
+      };
+      img.onerror = function () { resolve(''); };
+      img.src = 'data:image/' + type + ';base64,' + b64;
+    });
+  }
+  // Every label that's ready to print: its lines as Word has them, and its picture.
+  function previewLabels() {
+    var f = st.fmt, nums = keys(st.ready);
+    return Word.run(function (ctx) {
+      var table = ctx.document.body.tables.getFirst();
+      var got = nums.map(function (n) {
+        var c = S.cellOf(f, n), body = table.getCell(c.row, c.cell).body;
+        var ps = body.paragraphs; ps.load(PARA_PROPS);
+        var pics = body.inlinePictures; pics.load('items/width,items/height');
+        return { n: n, ps: ps, pics: pics };
+      });
+      return ctx.sync().then(function () {
+        got.forEach(function (g) { g.src = g.pics.items.length ? g.pics.items[0].getBase64ImageSrc() : null; });
+        return ctx.sync().then(function () { return got; });
+      });
+    }).then(function (got) {
+      var seen = {};
+      return Promise.all(got.map(function (g) {
+        var specs = paraSpecs(g.ps.items, f), out = { n: g.n, specs: specs };
+        if (!g.src) return out;
+        var pic = g.pics.items[0], b64 = String(g.src.value || ''), id = b64.length + ':' + b64.slice(0, 40) + b64.slice(-40);
+        var spot = 0;
+        for (var i = 0; i < specs.length; i++) { if (!cleanPara(specs[i].text)) { spot = i; break; } }
+        var url = previewPics[id] ? Promise.resolve(previewPics[id]) : shrinkPicture(b64, 700);
+        return url.then(function (src) {
+          seen[id] = previewPics[id] = src;
+          if (src && specs[spot]) specs[spot].pic = { src: src, w: pic.width, h: pic.height };
+          else out.picture = true;
+          return out;
+        });
+      })).then(function (labels) {
+        Object.keys(previewPics).forEach(function (id) { if (!seen[id]) delete previewPics[id]; });
+        return labels;
+      });
+    });
+  }
+  function previewData() {
+    var f = st.fmt;
+    return previewLabels().then(function (labels) {
+      return {
+        at: Date.now(), name: f.name, fmt: {
+          page: f.page, label: f.label, firstLabel: f.firstLabel, pitch: f.pitch, across: f.across, down: f.down,
+          corner: f.corner || 0, padding: f.padding, align: f.align, font: f.font
+        },
+        used: keys(st.used), labels: labels, arrow: st.header ? S.ARROW_TEXT : '', arrowPt: { before: S.ARROW_BEFORE_PT, size: S.ARROW_SIZE_PT },
+        adjusted: !!(st.applied && (Math.abs(st.applied.x || 0) > 0.001 || Math.abs(st.applied.y || 0) > 0.001))
+      };
+    });
+  }
+  // Kept for the window to read. Pictures are left out if they're too big to keep.
+  function savePreview(data) {
+    try { localStorage.setItem(LS.preview, JSON.stringify(data)); return true; } catch (e) { /* too big */ }
+    data.labels.forEach(function (l) { l.specs.forEach(function (p) { if (p.pic) { delete p.pic; l.picture = true; } }); });
+    try { localStorage.setItem(LS.preview, JSON.stringify(data)); return true; } catch (e) { return false; }
+  }
+  function openPreview() {
+    if (!Office.context.ui || !Office.context.ui.displayDialogAsync) { say('This version of Word can’t open the preview. Update Word and try again.', 'warn'); return; }
+    closePreview();
+    queue(function () { return readState().then(apply); }).then(previewData).then(function (data) {
+      if (!savePreview(data)) { say('The preview couldn’t be made: this Mac’s storage for the panel is full.', 'warn'); return; }
+      var land = st.fmt.page.width > st.fmt.page.height;
+      var url = new URL('preview.html', location.href.split('?')[0]).href + '?t=' + Date.now();
+      Office.context.ui.displayDialogAsync(url, { height: land ? 75 : 90, width: land ? 70 : 45, displayInIframe: false }, function (res) {
+        if (res.status !== Office.AsyncResultStatus.Succeeded) { say('The preview couldn’t open' + (res.error && res.error.message ? ': ' + res.error.message : '') + '.', 'warn'); return; }
+        previewDlg = res.value;
+        previewDlg.addEventHandler(Office.EventType.DialogMessageReceived, function (arg) {
+          var msg = null;
+          try { msg = JSON.parse(arg.message); } catch (e) { return; }
+          if (msg && msg.type === 'close') closePreview();
+        });
+        previewDlg.addEventHandler(Office.EventType.DialogEventReceived, function () { previewDlg = null; });
+      });
+    });
+  }
+  function closePreview() { clearTimeout(previewTimer); try { if (previewDlg) previewDlg.close(); } catch (e) { /* already closed */ } previewDlg = null; }
+  // The sheet changed while the window is open: give it the new page.
+  function previewSoon() {
+    if (!previewDlg) return;
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(function () {
+      if (!previewDlg || st.kind !== 'sheet') return;
+      previewData().then(savePreview).catch(function () { /* the window keeps the last page */ });
+    }, 700);
+  }
+
   // rows: [[name, company, street, apt, city, state, zip], ...], one per label
   // in order: row 1 goes on the first open label, and so on. An empty row
   // leaves its label open. Rows past the open labels go on new sheets.
@@ -1825,7 +1948,7 @@
   // A backup is a Word document holding this Mac's settings (address book,
   // return address, sizes, adjustments, stock, logo...). Things that only make
   // sense on this Mac, or for a moment, stay out.
-  var BACKUP_SKIP = /^lsk\.(tableInfo|tableDraft|addinRef|fillJob|sheets|testCheck\.|testNudge\.|last\.|phone$)/;
+  var BACKUP_SKIP = /^lsk\.(tableInfo|tableDraft|addinRef|fillJob|sheets|testCheck\.|testNudge\.|last\.|phone$|preview$)/;
   function backupKeys(withKey) {
     var out = {};
     try {
@@ -2068,7 +2191,7 @@
       var n = +b.dataset.n;
       var state = st.used[n] ? 'used' : st.ready[n] ? 'ready' : 'open';
       b.className = 'cell ' + state + (st.over[n] ? ' over' : '') + (st.here === n ? ' here' : '');
-      b.querySelector('.t').textContent = state === 'ready' ? String(st.texts[n] || '').split(/[\r\n\u000b]+/).slice(0, 3).join('\n') : '';
+      drawCellText(b.querySelector('.t'), state === 'ready' ? n : 0);
       b.querySelector('.side').textContent = sideWord(n);
       var tip = '';
       if (state === 'used') {
@@ -2079,6 +2202,15 @@
       b.title = tip;
       b.setAttribute('aria-label', cap(labelName(n)) + ', ' + (state === 'ready' ? 'ready to print: ' + firstLine(st.texts[n]) + (st.over[n] ? ', text may be cut off' : '') : tip.toLowerCase()));
     });
+  }
+
+  // The label's text where Word puts it: the lines as they're set in the document, to scale.
+  function drawCellText(t, n) {
+    var specs = n && st.specs && st.specs[n];
+    t.className = 't';
+    t.removeAttribute('style');
+    if (specs) { T.drawLabelText(t, specs, st.fmt); return; }
+    t.textContent = n ? String(st.texts[n] || '').split(/[\r\n\u000b]+/).slice(0, 3).join('\n') : '';
   }
 
   function renderTally() {
@@ -2358,6 +2490,125 @@
       e.stopImmediatePropagation();
     }, true);
     box.addEventListener('blur', function () { setTimeout(function () { if (as.box === box && document.activeElement !== box) closeAs(); }, 150); });
+  }
+
+  // ---------- address suggestions while typing on a label in Word ----------
+  // Word doesn't let add-ins show anything inside the document, so when the
+  // cursor is on a street line of a label, the suggestions show at the
+  // bottom of the panel. Picking one fills that line and the city line under
+  // it in the document.
+  // at: { n: label, index: paragraph in the label, text: the street typed }
+  // picked/closed: the street just filled, or the line whose card was closed, so they stay quiet.
+  var ds = { timer: 0, seq: 0, at: null, items: [], picked: null, closed: '' };
+  function cleanPara(t) { return String(t || '').replace(/[\u0000-\u001f]/g, ' ').replace(/\s+/g, ' ').trim(); }
+  function closeDocSugg() { ds.seq++; clearTimeout(ds.timer); ds.at = null; ds.items = []; $('dsugg').hidden = true; }
+  function docLineSoon() {
+    clearTimeout(ds.timer);
+    if (store(LS.suggest) === 'off' || st.kind !== 'sheet' || !st.fmt) { if (!$('dsugg').hidden) closeDocSugg(); return; }
+    ds.timer = setTimeout(readDocLine, 150);
+  }
+  function readDocLine() {
+    var seq = ++ds.seq, f = st.fmt;
+    return Word.run(function (ctx) {
+      var sel = ctx.document.getSelection();
+      var cell = sel.parentTableCellOrNullObject; cell.load('rowIndex,cellIndex');
+      var para = sel.paragraphs.getFirst(); para.load('text');
+      return ctx.sync().then(function () {
+        if (cell.isNullObject) return null;
+        var n = S.labelAt(f, cell.rowIndex, cell.cellIndex);
+        if (!n || st.used[n]) return null;
+        var ps = cell.body.paragraphs; ps.load('items/text');
+        return ctx.sync().then(function () {
+          var lines = ps.items.map(function (p) { return cleanPara(p.text); }), text = cleanPara(para.text);
+          var index = lines.indexOf(text);
+          return index < 0 ? null : { n: n, index: index, text: text, next: lines[index + 1] || '' };
+        });
+      });
+    }).then(function (at) {
+      if (seq !== ds.seq) return;
+      var S2 = suggester(), p = ds.picked;
+      if (!at || !/^\d/.test(at.text) || !S2.ready(at.text)) { if (!$('dsugg').hidden) closeDocSugg(); return; }
+      if (p && p.n === at.n && p.index === at.index && at.text.indexOf(p.street) === 0) return;
+      ds.picked = null;
+      var key = at.n + ':' + at.index;
+      if (ds.closed && ds.closed !== key) ds.closed = '';
+      if (ds.closed) return;
+      var q = cityLike(at.next) ? at.text + ', ' + at.next : at.text, now = S2.quick(q);
+      if (now.length) showDocSugg(at, now);
+      ds.timer = setTimeout(function () {
+        S2.ask(q).then(function (items) { if (seq === ds.seq) showDocSugg(at, items); }).catch(function () { /* the suggester says what happened */ });
+      }, S2.delay());
+    }).catch(function () { /* best effort: the label can still be typed by hand */ });
+  }
+  function showDocSugg(at, items) {
+    if (!items.length) { $('dsugg').hidden = true; ds.items = []; return; }
+    ds.at = at; ds.items = items;
+    $('dsugg-title').textContent = 'Suggestions for ' + labelName(at.n);
+    var list = $('dsugg-list');
+    list.innerHTML = '';
+    items.forEach(function (it, i) {
+      var b = el('button', '', it.label);
+      b.type = 'button'; b.setAttribute('role', 'option');
+      b.appendChild(el('small', '', it.sub));
+      b.addEventListener('click', function () { pickDocSugg(i); });
+      list.appendChild(b);
+    });
+    $('dsugg-credit').textContent = (items[0].source === 'photon' ? 'Photon by Komoot' : 'Powered by Geoapify') + ' · © OpenStreetMap contributors';
+    $('dsugg').hidden = false;
+  }
+  function pickDocSugg(i) {
+    var it = ds.items[i], at = ds.at;
+    if (!it || !at) return;
+    var addr = T.addressLines({ street: it.street, city: it.city, state: it.state, zip: it.zip, country: it.country }, { home: homeCountry() });
+    closeDocSugg();
+    queueChange(function () {
+      return Word.run(function (ctx) {
+        var c = S.cellOf(st.fmt, at.n), table = ctx.document.body.tables.getFirst();
+        var ps = table.getCell(c.row, c.cell).body.paragraphs;
+        ps.load('items/text,items/font/name,items/font/size,items/spaceBefore');
+        return ctx.sync().then(function () {
+          var items = ps.items, street = items[at.index];
+          // The line changed since the suggestions came up: leave it alone.
+          if (!street || cleanPara(street.text) !== at.text) return false;
+          // Replace the street line, and the city (and country) line under it if there is one.
+          var take = 1, under = items[at.index + 1] ? cleanPara(items[at.index + 1].text) : null;
+          if (under !== null && (cityLike(under) || !under)) {
+            take = 2;
+            if (items[at.index + 2] && /^(usa|u\.s\.a\.|united states|canada)$/i.test(cleanPara(items[at.index + 2].text))) take = 3;
+          }
+          var slots = items.slice(at.index, at.index + take), font = { name: street.font.name, size: street.font.size };
+          var line0 = street, k;
+          if (addr.length <= take) {
+            addr.forEach(function (line, j) { slots[j].insertText(line, 'Replace'); });
+            for (k = addr.length; k < take; k++) slots[k].delete();
+          } else if (at.index + take < items.length) {
+            slots.forEach(function (p, j) { p.insertText(addr[j], 'Replace'); });
+            var after = slots[take - 1];
+            addr.slice(take).forEach(function (line) { after = after.insertParagraph(line, 'After'); after.font.set(font); after.spaceBefore = 0; });
+          } else {
+            // These are the label's last lines. Word for Mac joins a line added after
+            // a cell's last line onto it, so new lines go in above the last one,
+            // which then takes the last line of the address.
+            var lastSlot = slots[take - 1], added = [];
+            slots.slice(0, take - 1).forEach(function (p, j) { p.insertText(addr[j], 'Replace'); });
+            addr.slice(take - 1, addr.length - 1).forEach(function (line, j) {
+              var np = lastSlot.insertParagraph(line, 'Before');
+              np.font.set(font);
+              np.spaceBefore = j === 0 && take === 1 ? lastSlot.spaceBefore || 0 : 0;
+              added.push(np);
+            });
+            lastSlot.insertText(addr[addr.length - 1], 'Replace');
+            if (take === 1) { lastSlot.spaceBefore = 0; line0 = added[0]; }
+          }
+          try { line0.getRange('End').select(); } catch (e) { /* the cursor stays where it was */ }
+          return ctx.sync().then(function () { return true; });
+        });
+      });
+    }).then(function (done) {
+      if (!done) { say('That line changed in the meantime, so it was left as it is.', 'warn'); return; }
+      ds.picked = { n: at.n, index: at.index, street: addr[0] };
+      return refresh().then(function () { askShrink([at.n]); });
+    });
   }
 
   // ---------- choosing contacts to import ----------
@@ -3203,7 +3454,7 @@
       }).then(function () { $('geo-save').disabled = false; });
     });
     $('geo-remove').addEventListener('click', function () { store(LS.geoKey, null); renderGeo('Key removed. Suggestions use Photon again.'); });
-    $('suggest-on').addEventListener('change', function () { store(LS.suggest, $('suggest-on').checked ? null : 'off'); });
+    $('suggest-on').addEventListener('change', function () { store(LS.suggest, $('suggest-on').checked ? null : 'off'); if (!$('suggest-on').checked) closeDocSugg(); });
     $('nudge-apply').addEventListener('click', function () {
       var nd = nudgeFor(st.fmt.id), L = S.layout(st.fmt, { margins: st.margins, nudge: nd });
       if (L.clampedUp) say('These labels can’t move that far up on this sheet. They were moved as far as possible; new sheets get the full adjustment.', 'warn');
@@ -3212,6 +3463,8 @@
 
     $('confirm-yes').addEventListener('click', function () { var a = pendingConfirm; closeAsk(); if (a) a(); });
     $('confirm-no').addEventListener('click', closeAsk);
+    $('preview-btn').addEventListener('click', openPreview);
+    $('dsugg-close').addEventListener('click', function () { if (ds.at) ds.closed = ds.at.n + ':' + ds.at.index; closeDocSugg(); });
     $('confirm-alt').addEventListener('click', function () { var a = pendingAlt; closeAsk(); if (a) a(); });
     wireFileLabels();
 

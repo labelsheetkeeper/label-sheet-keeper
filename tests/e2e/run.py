@@ -118,11 +118,21 @@ try:
     pg.click('#fit-warn button')
     check(wait(pg, "!LSK_TEST.st().over[9] && MOCK.labelCell(9).paras[0].font.size < 12"), 'fit text shrinks label 9', pg.evaluate("MOCK.labelCell(9).paras.map(p=>p.font.size)"))
 
-    # Print detection -> marks used, trips, history, undo
+    # Print detection -> asks whether they printed; No leaves them ready
     time.sleep(1.2)
     ready_before = pg.evaluate("Object.keys(LSK_TEST.st().ready).length")
     pg.evaluate("MOCK.lastPrint = Date.now()")
-    check(wait(pg, "(MOCK.settings.lskTrips||0) === 1", 9000), 'print noticed: trip counted')
+    check(wait(pg, "!document.getElementById('confirm').hidden && /Word sent this sheet to print.*Did labels .* print\\?/.test(document.getElementById('confirm-msg').textContent)", 9000), 'print noticed: asks whether the labels printed', pg.inner_text('#confirm-msg'))
+    check(pg.inner_text('#confirm-yes') == 'Yes, mark used' and pg.inner_text('#confirm-no') == 'No', 'answers are Yes, mark used and No', [pg.inner_text('#confirm-yes'), pg.inner_text('#confirm-no')])
+    check(pg.evaluate("(MOCK.settings.lskTrips||0) === 0"), 'nothing is marked before the answer')
+    pg.click('#confirm-no')
+    time.sleep(0.6)
+    check(pg.evaluate("(MOCK.settings.lskTrips||0) === 0 && Object.keys(LSK_TEST.st().ready).length === %d" % ready_before), 'No leaves the labels ready to print')
+    # Yes marks them used, trips, history, undo
+    time.sleep(1.2); pg.evaluate("MOCK.lastPrint = Date.now()")
+    check(wait(pg, "!document.getElementById('confirm').hidden", 9000), 'the next print asks again')
+    pg.click('#confirm-yes')
+    check(wait(pg, "(MOCK.settings.lskTrips||0) === 1", 9000), 'Yes: trip counted')
     check(wait(pg, "Object.keys(LSK_TEST.st().ready).length === 0"), 'ready labels marked used after print', ready_before)
     check(pg.evaluate("(MOCK.settings.lskHistory||[]).length === 1"), 'history entry written')
     check(pg.evaluate("!!localStorage.getItem('lsk.last.avery-5160')"), 'last label saved for reprint')
@@ -131,6 +141,7 @@ try:
     check(wait(pg, "(MOCK.settings.lskTrips||0) === 0 && Object.keys(LSK_TEST.st().ready).length === %d" % ready_before), 'undo restores labels and trip count')
     pg.click('#printed-btn')
     check(wait(pg, "(MOCK.settings.lskTrips||0) === 1"), 'I printed these counts a trip')
+    check(not pg.is_checked('#auto-mark'), 'marking without asking is off unless chosen')
 
     # One-pass warning on second trip
     pg.evaluate("MOCK.setLabelText(12, 'Ann Lee\\n5 Pine Rd\\nSalem, MA 01970', 10)"); select_label(pg, 12); refresh(pg)
@@ -300,8 +311,10 @@ try:
     check(wait(pg, "MOCK.cellText(MOCK.labelCell(2)).indexOf('SHIP TO') >= 0"), 'shipping address label placed on label 2')
     sp = pg.evaluate("MOCK.labelCell(2).paras.map(p => [p.text, p.leftIndent, p.font.size])")
     check(len(sp) == 8 and sp[4][0] == 'SHIP TO' and sp[4][1] == 36 and sp[-1][0] == 'City, KY 40000' and sp[-1][1] == 36 and sp[-1][2] == 16, 'shipping label lines keep their own size and indent', sp)
+    pg.evaluate("localStorage.setItem('lsk.markWithoutAsking', 'on')")
     time.sleep(1.2); pg.evaluate("MOCK.lastPrint = Date.now()")
-    check(wait(pg, "(MOCK.settings.lskTrips||0) === 1", 9000), 'print noticed on shipping sheet')
+    check(wait(pg, "(MOCK.settings.lskTrips||0) === 1", 9000), 'with marking without asking on, a print is counted straight away (shipping sheet)')
+    check(pg.is_hidden('#confirm') and 'now marked used' in say(pg), 'and says so without asking', say(pg))
     check(pg.is_hidden('#use-up'), 'no use-up suggestion on shipping sheets')
     check(not [e for e in errs if 'favicon' not in e], 'no script errors (scenario 2)', errs)
     pg.screenshot(path=OUT + '/s2-ship.png', full_page=True)

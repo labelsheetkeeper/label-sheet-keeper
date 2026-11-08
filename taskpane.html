@@ -354,7 +354,11 @@
         </div>
       </div>
       <p id="trips-out" class="warn" hidden></p>
-      <button type="button" id="printed-btn" class="btn primary wide">I printed these</button>
+      <div class="print-row">
+        <button type="button" id="preview-btn" class="btn ghost">Preview</button>
+        <button type="button" id="printed-btn" class="btn primary">I printed these</button>
+        <button type="button" class="info" aria-label="About the preview" data-tip="Opens the page as it will print, with the label edges drawn in. The edges and the shading on used labels only show in the preview.">i</button>
+      </div>
       <div id="undo-row" class="undo-row" hidden>
         <span id="undo-msg"></span>
         <button type="button" id="undo-btn" class="btn ghost sm">Undo</button>
@@ -401,7 +405,7 @@
     <details id="settings" class="more">
       <summary>Settings</summary>
       <div class="settings">
-        <label class="check"><input type="checkbox" id="auto-mark" checked> Mark labels used when Word prints</label>
+        <label class="check"><input type="checkbox" id="auto-mark"> Mark labels used when Word prints, without asking <button type="button" class="info" aria-label="About marking without asking" data-tip="Word only tells the panel a print was sent, which also happens when you save a PDF or the printer jams. So the panel asks whether the labels came out, unless this is on.">i</button></label>
         <label class="check"><input type="checkbox" id="show-saved" checked> Show labels saved from partly used sheets</label>
         <label id="arrow-row" class="check"><input type="checkbox" id="feed-arrow" checked> Print a small “▲ top” mark above the labels</label>
         <div class="row">
@@ -488,7 +492,15 @@
 
   <p id="error" class="error" role="alert" hidden></p>
 </main>
-<p id="say" class="say" role="status" aria-live="polite"></p>
+<div class="dock">
+  <!-- Address suggestions for the street being typed on a label in Word. -->
+  <div id="dsugg" class="dsugg" hidden>
+    <div class="dsugg-head"><b id="dsugg-title">Suggestions</b><button type="button" id="dsugg-close" class="x" aria-label="Close suggestions">×</button></div>
+    <div id="dsugg-list" class="dsugg-list" role="listbox" aria-label="Suggested addresses for the label"></div>
+    <p id="dsugg-credit" class="asugg-credit"></p>
+  </div>
+  <p id="say" class="say" role="status" aria-live="polite"></p>
+</div>
 <!-- Address suggestions for the address boxes; the panel puts it under the box being typed in. -->
 <div id="asugg" class="asugg" hidden>
   <div id="asugg-list" role="listbox" aria-label="Suggested addresses"></div>

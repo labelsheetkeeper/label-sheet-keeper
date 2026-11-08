@@ -104,8 +104,8 @@ try:
     pg.keyboard.type('p')
     check(wait(pg, "document.querySelectorAll('#asugg-list button').length === 2", 400), 'the next letter narrows the list at once', items(pg))
     check(items(pg) == ['8 Maple Way', '8 Maplewood Ave'], 'to what still fits ("8 Map" isn’t 28 Maple St)', items(pg))
-    pg.wait_for_timeout(350)
-    check(len(srv1.asked) == n + 1 and len(srv1.held) == 1 and items(pg) == ['8 Maple Way', '8 Maplewood Ave'], 'while a fresher answer is on its way', [len(srv1.asked), n, len(srv1.held)])
+    pg.wait_for_timeout(400)
+    check(len(srv1.asked) == n and items(pg) == ['8 Maple Way', '8 Maplewood Ave'], 'the first answer already had every match (fewer than 5), so no new lookup is spent', [len(srv1.asked), n])
     srv1.hold = False; srv1.release()
     pg.wait_for_timeout(200)
 

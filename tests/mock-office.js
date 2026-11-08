@@ -48,6 +48,9 @@
     c.paras = text.split('\n').map(function (t) { var p = para(t, 1); p.font.size = size || 10; p.font.name = 'Arial'; return p; });
   };
 
+  // A 2x2 grey PNG.
+  M.GREY_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAADklEQVR4nGPoAAMGCAUALK4GYdPeFKwAAAAASUVORK5CYII=';
+
   // ---------- object wrappers ----------
   function collection(items, extra) {
     var c = { items: items, load: function () { return c; } };
@@ -81,9 +84,12 @@
       insertParagraph: function (t, where) {
         if (!owner || !owner.cell) throw new Error('mock: insertParagraph outside a cell');
         var list = owner.cell.paras, i = list.indexOf(p), q = para(t, p.level);
+        // Word for Mac joins a paragraph added after a cell's last one onto it.
+        if (where === 'After' && i === list.length - 1) { p.text += t; list.push(para('', p.level)); M.calls.push('para.insertParagraph.AfterLast'); return paraObj(p, owner); }
         list.splice(where === 'Before' ? i : i + 1, 0, q);
         return paraObj(q, owner);
       },
+      getRange: function () { return { select: function () { M.calls.push('select'); } }; },
       delete: function () { if (owner && owner.remove) owner.remove(p); }
     };
     return o;
@@ -157,6 +163,14 @@
         }
       },
       get paragraphs() { return collection(cell.paras.map(function (p) { return paraObj(p, owner); })); },
+      // The label's pictures: ones placed through a paragraph keep their data; others are a small grey square.
+      get inlinePictures() {
+        var list = cell.paras.filter(function (p) { return p.pic; }).map(function (p) { return p.pic; });
+        while (list.length < cell.pics) list.push({ width: 72, height: 72, b64: M.GREY_PNG });
+        return collection(list.slice(0, cell.pics).map(function (img) {
+          return { load: function () { return this; }, width: img.width, height: img.height, getBase64ImageSrc: function () { return { value: img.b64 || M.GREY_PNG }; } };
+        }));
+      },
       get contentControls() { return collection(cell.ccs.map(function (c) { return ccObj(c, cell); })); },
       get text() { return M.cellText(cell); },
       load: function () { return b; }
@@ -275,8 +289,22 @@
               };
             }
           },
+          // M.selection: { row, cell, para } puts the cursor in that cell, on that paragraph (default the first).
           getSelection: function () {
-            return { get parentTableCellOrNullObject() { var s = M.selection; return s ? { isNullObject: false, rowIndex: s.row, cellIndex: s.cell, load: function () { return this; } } : { isNullObject: true, load: function () { return this; } }; } };
+            var selCell = function () { var s = M.selection, t = M.table(); return s && t && t.rows[s.row] ? t.rows[s.row][s.cell] : null; };
+            return {
+              get parentTableCellOrNullObject() {
+                var s = M.selection, c = selCell();
+                return s ? { isNullObject: false, rowIndex: s.row, cellIndex: s.cell, body: c ? cellBodyObj(c) : null, load: function () { return this; } } : { isNullObject: true, load: function () { return this; } };
+              },
+              paragraphs: {
+                getFirst: function () {
+                  var c = selCell();
+                  if (!c) return paraObj(para('', 0), null);
+                  return paraObj(c.paras[Math.min(M.selection.para || 0, c.paras.length - 1)], { cell: c });
+                }
+              }
+            };
           },
           save: function () { M.saved++; }
         },

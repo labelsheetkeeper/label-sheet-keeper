@@ -54,7 +54,7 @@ a{color:var(--accent)}
       <li>In the panel, choose your labels and click <b>Make the sheet</b>. Save the new document.</li>
       <li>On the map, click each label that's already peeled off your sheet.</li>
       <li>Fill labels: copy one you typed, place an address with a design, open the table window to fill many at once, or number them with a QR code or barcode.</li>
-      <li>Print with ⌘P at 100% scale. Feed the sheet top edge first, print side up, and choose Labels as the paper type. The panel notices and marks those labels used.</li>
+      <li>Print with ⌘P at 100% scale. Feed the sheet top edge first, print side up, and choose Labels as the paper type. The panel notices and asks whether the labels printed, then marks them used. <b>Preview</b> shows the page first, with the label edges drawn in.</li>
     </ol>
     <p>On shipping label sheets, the panel can also put an Amazon return label PDF or any label picture on the next open label. It finds the label's border by itself.</p>
     <p><b>From your phone:</b> link your phone in the panel's Settings by scanning a QR code, then send a return label from your phone. It shows up in the panel, ready to print.</p>
@@ -69,8 +69,8 @@ a{color:var(--accent)}
 
   <section id="address-suggestions">
     <h2>Address suggestions</h2>
-    <p>In the table window, type a house number and street, and the panel suggests matching US and Canadian addresses. Pick one to fill in the street, city, state or province, and ZIP or postal code. A ZIP code or postal code on its own also fills in the city.</p>
-    <p>Suggestions come from <a href="https://photon.komoot.io/" target="_blank" rel="noopener">Photon by Komoot</a>, a free service with no sign-up, using <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> data. What you type is sent to Photon to get suggestions. Photon is shared by everyone, so it asks for light use, and some house numbers aren't in OpenStreetMap yet. You can turn suggestions off in <b>Settings › Address suggestions</b>.</p>
+    <p>Type a house number and street in any of the panel's address boxes, in the table window, or on a label in the Word document, and matching US and Canadian addresses are suggested. Pick one to fill in the street, city, state or province, and ZIP or postal code. For a label in the document, the suggestions show at the bottom of the panel. A ZIP code or postal code on its own also fills in the city.</p>
+    <p>Suggestions come from <a href="https://www.geoapify.com/" target="_blank" rel="noopener">Geoapify</a> through the Label Sheet Keeper server, so you don't need an account. When the day's shared lookups are used up, they come from <a href="https://photon.komoot.io/" target="_blank" rel="noopener">Photon by Komoot</a>, a free service with no sign-up. Both use <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> data, and what you type is sent to them. Some house numbers aren't in OpenStreetMap yet. You can turn suggestions off in <b>Settings › Address suggestions</b>.</p>
     <p><b>Bring your own key (optional).</b> For your own daily allowance, use a free Geoapify key instead:</p>
     <ol>
       <li>Go to <a href="https://www.geoapify.com/" target="_blank" rel="noopener">geoapify.com</a> and sign up for a free account. No credit card is needed; the free plan includes 3,000 lookups a day.</li>
@@ -78,7 +78,7 @@ a{color:var(--accent)}
       <li>In the key's settings, limit it to requests from this add-in by adding <code>https://labelsheetkeeper.github.io</code> as an allowed origin (or HTTP referrer). Then the key won't work on other websites.</li>
       <li>In Word, open the panel, then <b>Settings › Address suggestions</b>. Paste the key and click <b>Save key</b>. The panel checks it with Geoapify.</li>
     </ol>
-    <p>The key is kept by the panel on your Mac only. It isn't in this project's code or in your Word documents. With a key, suggestions go to Geoapify instead of Photon. If you use Word on another Mac, paste the key there too.</p>
+    <p>The key is kept by the panel on your Mac only. It isn't in this project's code or in your Word documents. With a key, suggestions go straight to Geoapify on your own allowance instead of the shared one. If you use Word on another Mac, paste the key there too.</p>
     <p><b>Canadian addresses</b> are written the way Canada Post asks: <code>5-123 Main St</code> for a unit and <code>Toronto ON&nbsp;&nbsp;M5V 3L9</code> on the last line. Mail to Canada gets a <code>CANADA</code> line. If you mail from Canada, choose <b>Settings › You mail from › Canada</b>, and US addresses get a <code>USA</code> line instead.</p>
   </section>
 

@@ -368,6 +368,57 @@
     var r = textHeight(paras, box, measure, 1);
     return !r.tooWide && r.height <= box.height + 0.5;
   }
+
+  // ---------- drawing a label's text the way Word lays it out ----------
+  // el covers one label and sits inside a container as wide as the page
+  // (container-type: inline-size), so sizes in cqw are to scale. Like the
+  // label cells Word prints: side padding, the text centred in the label
+  // (or at the top or bottom, by the sheet), each line's font, size, bold,
+  // italic, alignment, indents and spacing; text that doesn't fit starts at
+  // the top and is cut off at the bottom.
+  // paras: [{ text, font, size, bold, italic, align, before, after, indent, right, first, lineSpacing }]
+  function drawLabelText(el, paras, f) {
+    var doc = el.ownerDocument, pw = f.page.width;
+    var u = function (pt) { return (pt / 72 / pw * 100).toFixed(4) + 'cqw'; };
+    el.textContent = '';
+    el.classList.add('lt');
+    el.style.paddingLeft = (f.padding.left / f.label.width * 100) + '%';
+    el.style.paddingRight = (f.padding.right / f.label.width * 100) + '%';
+    var inner = doc.createElement('div');
+    inner.className = 'lt-in';
+    // Auto margins centre the text but, unlike centring, never push it above the label's top edge.
+    inner.style.marginTop = f.align === 'top' ? '0' : 'auto';
+    inner.style.marginBottom = f.align === 'bottom' ? '0' : 'auto';
+    (paras || []).forEach(function (p) {
+      var d = doc.createElement('div'), font = p.font || (f.font && f.font.name) || 'Arial';
+      var size = p.size || (f.font && f.font.size) || 10;
+      var mult = p.lineSpacing && p.lineSpacing > 0 ? p.lineSpacing / 12 : 1;
+      var a = String(p.align || '').toLowerCase();
+      var text = String(p.text || '').replace(/[\u000b\r]/g, '\n');
+      if (p.pic && p.pic.src) {
+        var img = doc.createElement('img');
+        img.src = p.pic.src; img.alt = '';
+        img.style.width = u(p.pic.w || 72); img.style.height = u(p.pic.h || 72);
+        img.style.verticalAlign = 'bottom';
+        d.appendChild(img);
+        if (text.trim()) d.appendChild(doc.createTextNode(text));
+      } else d.textContent = text || ' ';
+      d.style.fontFamily = '"' + font.replace(/"/g, '') + '", Arial, sans-serif';
+      d.style.fontSize = u(size);
+      d.style.lineHeight = String(+(lineHeightFactor(font) * mult).toFixed(3));
+      d.style.fontWeight = p.bold ? '700' : '400';
+      d.style.fontStyle = p.italic ? 'italic' : 'normal';
+      d.style.textAlign = /^cent/.test(a) ? 'center' : a === 'right' ? 'right' : /^just/.test(a) ? 'justify' : 'left';
+      if (p.before) d.style.marginTop = u(p.before);
+      if (p.after) d.style.marginBottom = u(p.after);
+      if (p.indent) d.style.paddingLeft = u(Math.max(0, p.indent));
+      if (p.right) d.style.paddingRight = u(Math.max(0, p.right));
+      if (p.first) d.style.textIndent = u(p.first);
+      inner.appendChild(d);
+    });
+    el.appendChild(inner);
+    return el;
+  }
   // Largest scale (<= 1) at which the text fits, or null if even 5pt text won't.
   function fitScale(paras, box, measure) {
     if (fits(paras, box, measure)) return 1;
@@ -507,8 +558,10 @@
   // OpenStreetMap data. Resolves to [{ label, sub, street, city, state, zip,
   // country, source }]; rejects with err.status (401/403: bad key, 429: too many).
   function suggestAddresses(text, key) { return key ? geoapifySuggest(text, key) : photonSuggest(text); }
+  // .complete: Geoapify sent fewer than the 5 asked for, so these are all it has for that text.
   function geoapifyItems(j) {
-    return ((j && j.results) || []).filter(function (r) { return r.street || r.address_line1; }).map(function (r) {
+    var raw = (j && j.results) || [];
+    var out = raw.filter(function (r) { return r.street || r.address_line1; }).map(function (r) {
       var country = String(r.country_code || '').toUpperCase() === 'CA' ? 'CA' : 'US';
       var street = r.street ? [r.housenumber, r.street].filter(Boolean).join(' ') : String(r.address_line1 || '');
       return {
@@ -517,6 +570,8 @@
         country: country, source: 'geoapify'
       };
     });
+    out.complete = raw.length < 5;
+    return out;
   }
   function geoapifySuggest(text, key) {
     return fetchJson(GEO + '&limit=5&filter=countrycode:us,ca&text=' + encodeURIComponent(text) + '&apiKey=' + encodeURIComponent(key)).then(geoapifyItems);
@@ -541,7 +596,26 @@
       text = String(text || '').trim();
       return Date.now() >= pausedUntil && text.length >= (source() === 'photon' ? 5 : 4) && /\d/.test(text) && /[a-z]{2}/i.test(text);
     }
-    function delay() { return source() === 'photon' ? 300 : 150; }
+    // How long typing pauses before asking. Lookups through the shared key wait a bit longer so they're spent on pauses, not on every letter.
+    function delay() { var s = source(); return s === 'key' ? 200 : s === 'shared' ? 250 : 300; }
+    // "12 maple st, boston" -> { street: '12 maple st', rest: 'boston' }
+    function parts(q) {
+      var i = q.indexOf(',');
+      return i < 0 ? { street: q, rest: '' } : { street: q.slice(0, i).trim(), rest: q.slice(i + 1).trim() };
+    }
+    // An earlier answer that held every match for text this one only adds to, still fitting what's typed now.
+    function covered(q, words) {
+      var src = source() + ':', now = parts(q);
+      for (var i = order.length - 1; i >= 0; i--) {
+        var k = order[i], items = cache[k];
+        if (k.indexOf(src) !== 0 || !items.complete || !items.length) continue;
+        var was = parts(k.slice(src.length));
+        if (was.rest !== now.rest || now.street.indexOf(was.street) !== 0) continue;
+        var got = items.filter(function (it) { return fits(it, words); });
+        if (got.length) return got;
+      }
+      return null;
+    }
     // Each word typed starts a word of the suggestion: "8 map" fits "8 Maple Way", not "28 Maple".
     function fits(item, words) {
       var have = (item.street + ' ' + item.sub).toLowerCase().split(/[\s,]+/);
@@ -549,18 +623,23 @@
     }
     function quick(q) {
       q = String(q || '').toLowerCase().trim();
-      var words = q.split(/[\s,]+/).filter(Boolean), src = source() + ':';
+      var words = q.split(/[\s,]+/).filter(Boolean), src = source() + ':', now = parts(q);
       for (var i = order.length - 1; i >= 0; i--) {
-        var k = order[i], asked = k.slice(src.length);
-        if (k.indexOf(src) !== 0 || q.indexOf(asked.split(',')[0].trim()) !== 0) continue;
+        var k = order[i];
+        if (k.indexOf(src) !== 0) continue;
+        // An answer narrowed by a city only stands in for text with that same city.
+        var was = parts(k.slice(src.length));
+        if ((was.rest && was.rest !== now.rest) || now.street.indexOf(was.street) !== 0) continue;
         var got = cache[k].filter(function (it) { return fits(it, words); });
         if (got.length) return got;
       }
       return [];
     }
     function ask(q) {
-      var src = source(), id = src + ':' + String(q).toLowerCase().trim();
+      var src = source(), text = String(q).toLowerCase().trim(), id = src + ':' + text;
       if (cache[id]) return Promise.resolve(cache[id]);
+      var have = covered(text, text.split(/[\s,]+/).filter(Boolean));
+      if (have) return Promise.resolve(have);
       var p = src === 'key' ? geoapifySuggest(q, ownKey())
         : src === 'shared' ? sharedSuggest(q).catch(function () { sharedTrouble = true; return photonSuggest(q); })
           : photonSuggest(q);
@@ -583,8 +662,8 @@
     // A street without that house number in the map still gets the number typed.
     var typedNumber = (/^\s*(\d+[A-Za-z]?(?:-\d+)?)\s/.exec(text) || [])[1] || '';
     return fetchJson(PHOTON + encodeURIComponent(text)).then(function (j) {
-      var seen = {};
-      return ((j && j.features) || []).map(function (f) {
+      var seen = {}, raw = (j && j.features) || [];
+      var out = raw.map(function (f) {
         var p = f.properties || {}, country = String(p.countrycode || '').toUpperCase();
         if (country !== 'US' && country !== 'CA') return null;
         var streetName = p.street || (p.type === 'street' ? p.name : '');
@@ -598,6 +677,8 @@
         seen[id] = true;
         return { label: street, sub: sub, street: street, city: city, state: state, zip: zip, country: country, source: 'photon' };
       }).filter(Boolean).slice(0, 5);
+      out.complete = raw.length < 8 && out.length < 5;
+      return out;
     });
   }
 
@@ -866,7 +947,7 @@
   var api = {
     parseDelimited: parseDelimited, readXlsx: readXlsx, parseVCard: parseVCard,
     headerMap: headerMap, rowsToAddresses: rowsToAddresses, rowsToContacts: rowsToContacts, addressLines: addressLines, fixZip: fixZip, linesToFields: linesToFields,
-    fontCss: fontCss, textHeight: textHeight, fits: fits, fitScale: fitScale, findLabelBorder: findLabelBorder,
+    fontCss: fontCss, textHeight: textHeight, fits: fits, drawLabelText: drawLabelText, fitScale: fitScale, findLabelBorder: findLabelBorder,
     unwrapTable: unwrapTable, countryOf: countryOf, fixPostal: fixPostal, regionCode: regionCode, lookupPostal: lookupPostal, suggestAddresses: suggestAddresses, sharedSuggest: sharedSuggest, makeSuggester: makeSuggester,
     reorderLink: reorderLink, numberText: numberText, qrMatrix: qrMatrix, code128: code128, findGrid: findGrid, alignFromScan: alignFromScan,
     MARK: MARK, markSpots: markSpots, findMarks: findMarks, alignFromMarks: alignFromMarks,

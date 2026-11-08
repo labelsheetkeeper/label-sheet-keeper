@@ -108,6 +108,7 @@ ok(ps[0].phone === '617-555-0100' && ps[0].email === 'jane@example.com', 'no hea
     u = String(u); calls.push(u);
     if (u.includes('labelsheetkeeper.workers.dev')) {
       if (serverStatus !== 200) return new Response('{"error":"used up"}', { status: serverStatus });
+      if (u.includes('Oak')) return new Response(JSON.stringify({ results: ['1', '2', '3', '4', '5'].map((h) => geo('5' + h, 'Oak St', 'Boston')) }));
       return new Response(JSON.stringify({ results: [geo('8', 'Maple Way', 'Boston'), geo('8', 'Maplewood Ave', 'Salem'), geo('28', 'Maple St', 'Quincy')] }));
     }
     if (u.includes('photon.komoot.io')) return new Response(JSON.stringify({ features: [{ properties: { type: 'house', housenumber: '8', street: 'Elm St', city: 'Boston', state: 'Massachusetts', postcode: '02108', countrycode: 'US' } }] }));
@@ -116,7 +117,7 @@ ok(ps[0].phone === '617-555-0100' && ps[0].email === 'jane@example.com', 'no hea
   const notes = [];
   const S = T.makeSuggester({ key: () => '', notice: (t) => notes.push(t) });
   ok(!S.ready('8 M') && S.ready('8 Ma') && !S.ready('Maple'), 'suggestions start at a house number and two letters ("8 Ma")');
-  ok(S.delay() === 150, 'and ask quickly through the server');
+  ok(S.delay() === 250, 'and ask through the server once typing pauses a quarter second');
   let got = await S.ask('8 Ma');
   ok(got.length === 3 && got[0].source === 'geoapify' && calls[0].includes('/suggest?text=8%20Ma'), 'the first answer comes through the server ' + calls[0]);
   ok(J(S.quick('8 map').map((i) => i.street)) === J(['8 Maple Way', '8 Maplewood Ave']), 'typing on narrows it at once, by the start of each word (not 28 Maple St)');
@@ -125,6 +126,13 @@ ok(ps[0].phone === '617-555-0100' && ps[0].email === 'jane@example.com', 'no hea
   const before = calls.length;
   got = await S.ask('8 ma');
   ok(calls.length === before && got.length === 3, 'the same question isn’t asked twice');
+  got = await S.ask('8 Maplew');
+  ok(calls.length === before && J(got.map((i) => i.street)) === J(['8 Maplewood Ave']), 'an answer that already had every match (fewer than 5) answers longer text without asking again');
+  await S.ask('8 Maplew, Salem');
+  ok(calls.length === before + 1, 'but a different city after it is asked about');
+  await S.ask('5 Oak');
+  await S.ask('5 Oak S');
+  ok(calls.length === before + 3, 'and an answer with 5 (maybe more out there) is asked about again as you type');
   serverStatus = 429;
   got = await S.ask('9 Elm');
   ok(got.length === 1 && got[0].source === 'photon' && S.delay() === 300 && !S.ready('9 El'), 'when the shared ones are used up, Photon answers (a little slower, a little more typed first)');
@@ -133,6 +141,7 @@ ok(ps[0].phone === '617-555-0100' && ps[0].email === 'jane@example.com', 'no hea
   ok(calls.length === n2 + 1 && calls[n2].includes('photon.komoot.io'), 'and the server isn’t asked again');
   ok(S.quick('8 map').length === 0, 'answers from the server aren’t mixed in with Photon’s');
   const K = T.makeSuggester({ key: () => '0123456789abcdef', notice: (t) => notes.push(t) });
+  ok(K.delay() === 200, 'with their own key, asks after a fifth of a second');
   globalThis.fetch = async (u) => { calls.push(String(u)); return new Response('{"message":"Invalid apiKey"}', { status: 401 }); };
   let err = null;
   try { await K.ask('8 Ma'); } catch (e) { err = e; }

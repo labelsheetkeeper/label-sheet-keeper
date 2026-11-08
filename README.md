@@ -3,9 +3,9 @@
 A side panel for Microsoft Word that keeps track of which labels on a sheet are already used, so partly used sheets don't go to waste.
 
 - The Word document **is** the label sheet. Type and format labels right in it.
-- The panel shows a map of the sheet: used, ready to print, and open labels.
+- The panel shows a map of the sheet: used, ready to print, and open labels, with each label's text where Word puts it. **Preview** opens the whole page as it will print, with the label edges drawn in.
 - Fill labels by copying one you typed, by placing an address (with a design), or from a table of many addresses.
-- The panel notices when Word prints the sheet, marks those labels used (with Undo), and counts the sheet's trips through the printer.
+- The panel notices when Word sends the sheet to print, asks whether the labels came out, marks them used (with Undo), and counts the sheet's trips through the printer.
 - Everything about a sheet is saved inside its Word document, so it goes wherever the file goes.
 
 ## Label sizes
@@ -43,7 +43,7 @@ Point at an **ⓘ** in the panel for a short explanation of that tool.
    - **Address:** type an address or pick one from the dropdown, which lists your last ten addresses under **Recent** and then your address book. Choose a design (Plain, Bold name, Return to, With logo), and put it on the next open label or every open label. Under the address are **Phone** and **Email**, each with an **On label** box; ticked ones print under the address. A contact with a second address (like a PO box), phone or email shows those too, with **Address 1 / Address 2** to switch. What starts ticked comes from the sheet (**Use for this sheet**), unless the contact has its own choice (**Remember for …**, which also saves the phone and email you typed); unticking a box changes only the label you're placing. If text may be cut off once it's on a label, the panel says so and asks before shrinking it, never below a readable size. In the **Address book**, click a saved address to change it, add a second address, phones and emails, or put it in groups (like Family or Work); pick a group to see just its addresses and put the whole group on your open labels, each contact as remembered. **Import contacts** reads a file from the Mac Contacts app (.vcf), Google or Outlook (.csv) or Excel and lists who's in it; tick the ones to import. Someone already saved gets the details they were missing. The table window can add a whole group too.
    - **Table:** opens a bigger window like a small spreadsheet, with one row for each open label. The first column shows which label a row goes on. Type addresses, paste cells from Excel or Numbers, or open an Excel, CSV or contacts file. **On labels: Phone, Email** says whether those columns print (it starts from the sheet's choice); leave a row's phone or email empty to keep it off that label. Rows past your open labels are marked "New sheet"; **Fill labels** puts them on new sheets, each in its own window.
    - **Numbers:** numbers labels in order ("Box 1 of 12", "BIN-007"), with a QR code or a Code 128 barcode under each if you like. Numbering picks up where you left off on the next sheet.
-4. **Print** with ⌘P at 100% scale. Feed the sheet top edge first, print side up, and choose **Labels** as the paper type. The panel notices the print and marks those labels used.
+4. **Print** with ⌘P at 100% scale. Feed the sheet top edge first, print side up, and choose **Labels** as the paper type. The panel notices the print and asks whether those labels printed; **Yes, mark used** marks them used, **No** leaves them ready. (Word only tells the panel that a print was sent, which also happens when you save a PDF or the printer jams. To mark labels used without being asked, turn on **Settings › Mark labels used when Word prints, without asking**.) To see the page first, click **Preview** in the Print step: a window shows the page as it will print, with each label's edge drawn in and the used labels shaded (neither prints). It follows your changes while it's open.
 
 When you load a fresh sheet of labels, click **Reset for a fresh sheet**.
 
@@ -83,7 +83,11 @@ Labels you send show up on shipping-label sheets as "1 label from your phone." *
 
 ### Address suggestions
 
-Type a house number and the start of the street ("8 Ma") in any address box (Address, Ship to, From, or a contact's addresses) or in the table window, and matching US and Canadian addresses drop down under it. Pick one with a click, or the arrow keys and Enter or Tab, to fill in the street, city, state or province, and ZIP or postal code; in an address box that's the street line and the city line under it. Each letter you add narrows the list at once while a fresher answer is on its way. A ZIP code or postal code on its own also fills in the city (using the free Zippopotam.us service).
+Type a house number and the start of the street ("8 Ma") in any address box (Address, Ship to, From, or a contact's addresses) or in the table window, and matching US and Canadian addresses drop down under it. Pick one with a click, or the arrow keys and Enter or Tab, to fill in the street, city, state or province, and ZIP or postal code; in an address box that's the street line and the city line under it. A ZIP code or postal code on its own also fills in the city (using the free Zippopotam.us service).
+
+Typing a street on a label in the Word document works too: Word doesn't let add-ins show anything inside the document, so the suggestions show at the bottom of the panel, under **Suggestions for label N**. Click one to fill that label's street line and the city line under it. **×** hides them for that line.
+
+Each letter you add narrows the list at once. A lookup is only made once typing pauses, and not at all when the last answer already had every match (fewer than five) for what you've typed.
 
 Suggestions come from [Geoapify](https://www.geoapify.com/) through the Label Sheet Keeper server (the Worker in `worker/`), which holds one Geoapify key for everyone, so you don't need one. Everyone together gets up to 2,700 a day, and one internet address up to 300. When they're used up, or the server is busy, suggestions come from [Photon by Komoot](https://photon.komoot.io/) instead, a free service with no sign-up. Both use [OpenStreetMap](https://www.openstreetmap.org/copyright) data, and what you type is sent to them. Turn suggestions off in **Settings › Address suggestions**.
 
@@ -158,6 +162,7 @@ The version Word shows under the add-in's Security Info comes from `manifest.xml
 | `manifest.xml` | Setup file for Word on your Mac |
 | `taskpane.html`, `taskpane.css`, `taskpane.js` | The side panel |
 | `table.html`, `table.css`, `table.js` | The table window |
+| `preview.html`, `preview.js` | The print preview window |
 | `formats.js` | The list of label sizes |
 | `sheetdoc.js` | Builds Word documents laid out for a label size |
 | `lsk-tools.js` | Reads address lists and contacts, formats US and Canadian addresses, looks up ZIP and postal codes, suggests addresses (Photon or Geoapify), fits text, finds label borders, makes reorder links, numbers, QR codes and Code 128 barcodes, and measures scanned test pages |
