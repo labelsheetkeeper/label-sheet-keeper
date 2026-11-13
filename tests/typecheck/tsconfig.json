@@ -1,0 +1,22 @@
+{
+  "//": "Type-checks the plain JavaScript without changing it: tsc -p tests/typecheck. Findings are hints to read, not all bugs.",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "target": "es2020",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["es2020", "dom", "dom.iterable"],
+    "strict": false,
+    "noImplicitAny": false,
+    "skipLibCheck": true,
+    "types": []
+  },
+  "files": [
+    "globals.d.ts",
+    "../../lsk-config.js", "../../formats.js", "../../sheetdoc.js", "../../lsk-tools.js", "../../lsk-account.js",
+    "../../taskpane.js", "../../table.js", "../../preview.js", "../../auth.js",
+    "../../worker/src/shared.js", "../../worker/src/account.js", "../../worker/src/index.js"
+  ]
+}
