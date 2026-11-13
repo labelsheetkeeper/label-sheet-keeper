@@ -10,7 +10,7 @@
   // shows an old copy after an update.
   window.LSK_T = Date.now();
   document.write('<link rel="stylesheet" href="taskpane.css?t=' + LSK_T + '">' +
-    ['vendor/jszip/jszip.min.js', 'formats.js', 'sheetdoc.js', 'lsk-tools.js'].map(function (f) {
+    ['vendor/jszip/jszip.min.js', 'lsk-config.js', 'formats.js', 'sheetdoc.js', 'lsk-tools.js', 'lsk-account.js'].map(function (f) {
       return '<script src="' + f + '?t=' + LSK_T + '"><\/script>';
     }).join(''));
 </script>
@@ -94,7 +94,7 @@
       <p class="hint">Download a blank sheet and open it in Word: <span id="tpl-links"></span></p>
     </details>
     <details id="backup-none" class="more">
-      <summary>Back up or restore settings <button type="button" class="info" aria-label="About backups" data-tip="Saves your address book, return address, label sizes, printer adjustments, label stock and logo in a Word document. Restore it on this Mac or another one.">i</button></summary>
+      <summary><span id="backup-none-title">Back up or restore settings</span> <button type="button" class="info" aria-label="About backups" data-tip="Saves your address book, return address, label sizes, printer adjustments, label stock and logo in a Word document. Restore it on this Mac or another one.">i</button></summary>
       <div id="backup-none-slot"></div>
     </details>
     <p id="fmt-problems" class="warn" hidden></p>
@@ -481,6 +481,17 @@
 
   <!-- Back up and restore: shown in Settings on a sheet, or on its own elsewhere -->
   <div id="backup-block" class="backup-block">
+    <!-- Sync: hidden until signing in is set up (lsk-config.js). -->
+    <div id="sync-block" class="sync-block" hidden>
+      <span class="fl">Sync <button type="button" class="info" aria-label="About sync" data-tip="Keeps your address book, return address, logo, label sizes, label stock and settings the same on every computer where you turn sync on. They’re stored on the Label Sheet Keeper server under your Microsoft account; the server keeps no name, email or password. Label sheets, printer adjustments and your Geoapify key stay on this Mac.">i</button></span>
+      <p id="sync-status" class="hint" role="status"></p>
+      <div class="row">
+        <button type="button" id="sync-on" class="btn ghost sm">Turn on sync</button>
+        <button type="button" id="sync-now" class="btn ghost sm" hidden>Sync now</button>
+        <button type="button" id="sync-off" class="btn link sm" hidden>Turn off</button>
+        <button type="button" id="sync-delete" class="btn link sm" hidden>Delete my account</button>
+      </div>
+    </div>
     <span class="fl backup-head">Backup <button type="button" class="info" aria-label="About backups" data-tip="Saves your address book, return address, label sizes, printer adjustments, label stock and logo in a Word document. Restore it on this Mac or another one.">i</button></span>
     <label id="backup-key-row" class="check" hidden><input type="checkbox" id="backup-key"> Include my Geoapify key</label>
     <div class="row">

@@ -17,3 +17,8 @@ database_name = "label-sheet-keeper"
 # The labels' files, written once and read once; they expire after 7 days.
 [[kv_namespaces]]
 binding = "LABELS"
+
+# Sign in with Microsoft: the app's "Application (client) ID" from its Microsoft
+# registration. Not a secret (the panel's pages show it too). Empty: sign-in is off.
+[vars]
+MS_CLIENT_ID = ""

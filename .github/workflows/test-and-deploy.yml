@@ -67,13 +67,21 @@ jobs:
         if: ${{ !cancelled() }}
         run: python tests/e2e/run21.py
 
+      - name: Signing in and sync in the panel, and the sign-in window
+        if: ${{ !cancelled() }}
+        run: python tests/e2e/run22.py
+
       - name: Worker request handling
         if: ${{ !cancelled() }}
         run: node tests/worker-test.mjs
 
+      - name: Sync between several computers, through the Worker
+        if: ${{ !cancelled() }}
+        run: node tests/sync-test.mjs
+
       - name: Lint
         if: ${{ !cancelled() }}
-        run: npx --yes eslint@10.1.0 -c tests/eslint.config.cjs taskpane.js table.js lsk-tools.js sheetdoc.js preview.js
+        run: npx --yes eslint@10.1.0 -c tests/eslint.config.cjs taskpane.js table.js lsk-tools.js sheetdoc.js preview.js lsk-account.js lsk-config.js auth.js
 
   deploy:
     needs: test
@@ -197,6 +205,18 @@ jobs:
             503) echo "::notice title=Address suggestions::Not set up yet ($(jq -r .error sugg.json)). The table window uses Photon until the GEOAPIFY_KEY secret is saved." ;;
             429) echo "::notice title=Address suggestions::Used up for today; Photon fills in until tomorrow." ;;
             *) echo "::error title=Address suggestions::The Worker answered $code: $(head -c 300 sugg.json)"; exit 1 ;;
+          esac
+
+      # Accounts: off until the app's Microsoft ID is set (MS_CLIENT_ID in worker/wrangler.toml).
+      - name: Check signing in
+        run: |
+          code=$(curl -s -o auth.json -w '%{http_code}' -X POST -H 'Origin: https://labelsheetkeeper.github.io' -H 'Content-Type: application/json' -d '{"id_token":"not.a.token"}' "$WORKER_URL/auth/microsoft")
+          none=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Origin: https://labelsheetkeeper.github.io' -d '{}' "$WORKER_URL/sync")
+          [ "$none" = "401" ] || { echo "::error title=Signing in::Syncing without a session answered $none, not 401"; exit 1; }
+          case "$code" in
+            503) echo "::notice title=Signing in::Not set up yet: the app's Microsoft ID isn't filled in. Syncing without a session is refused." ;;
+            401) echo "::notice title=Signing in::On. A made-up sign-in is refused, and so is syncing without a session." ;;
+            *) echo "::error title=Signing in::A made-up sign-in answered $code: $(head -c 300 auth.json)"; exit 1 ;;
           esac
 
       # How many shared lookups are used so far today (UTC). Connections are

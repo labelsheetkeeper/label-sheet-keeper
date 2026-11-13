@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in – Label Sheet Keeper</title>
+<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+<script>
+  window.LSK_T = Date.now();
+  document.write(['lsk-config.js', 'auth.js'].map(function (f) { return '<script src="' + f + '?t=' + LSK_T + '"><\/script>'; }).join(''));
+</script>
+<style>
+  :root{ --bg:#F4F6F5; --ink:#17212A; --muted:#55636E; color-scheme:light; }
+  @media (prefers-color-scheme:dark){ :root{ --bg:#1E2326; --ink:#E4EAEC; --muted:#9AA9AF; color-scheme:dark; } }
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--ink);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif}
+  main{min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;padding:24px;text-align:center;box-sizing:border-box}
+  h1{margin:0;font-size:17px}
+  p{margin:0;color:var(--muted);max-width:34ch}
+</style>
+</head>
+<body>
+<main>
+  <h1>Label Sheet Keeper</h1>
+  <p id="msg" role="status">Opening Microsoft’s sign-in…</p>
+</main>
+</body>
+</html>

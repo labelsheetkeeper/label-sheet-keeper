@@ -19,7 +19,9 @@ python3 tests/e2e/run18.py         # linking a phone, labels sent from it, the p
 python3 tests/e2e/run19.py         # phone, email and second addresses; choosing contacts to import
 python3 tests/e2e/run20.py         # address suggestions in the panel's address boxes
 python3 tests/e2e/run21.py         # label text where Word puts it, suggestions on labels, print preview
-npx eslint -c tests/eslint.config.cjs taskpane.js table.js lsk-tools.js sheetdoc.js preview.js
+python3 tests/e2e/run22.py         # signing in and sync in the panel, and the sign-in window
+node tests/sync-test.mjs           # several pretend computers syncing through the Worker's code
+npx eslint -c tests/eslint.config.cjs taskpane.js table.js lsk-tools.js sheetdoc.js preview.js lsk-account.js lsk-config.js auth.js
 ```
 
-Each script ends with "N checks, 0 failed" and exits with an error if any check failed. Screenshots and files they make go in `tests/out/`, which isn't committed. Each script serves the repository on its own local port (8790, 8791, 8794 to 8799).
+Each script ends with "N checks, 0 failed" and exits with an error if any check failed. Screenshots and files they make go in `tests/out/`, which isn't committed. Each script serves the repository on its own local port (8790, 8791, 8794 to 8800).

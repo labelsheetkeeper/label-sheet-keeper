@@ -18,14 +18,23 @@
 //
 //   GET    /suggest?text=…       up to 5 US and Canadian addresses       (panel only)
 //
+// Accounts and sync (see account.js): sign in with Microsoft, then keep the
+// address book and settings the same on every computer.
+//
+//   POST   /auth/microsoft       a Microsoft ID token → { session }      (panel only)
+//   POST   /sync                 send changes, get the others'           (session)
+//   GET    /account              how much is stored                      (session)
+//   DELETE /account              the account and everything in it        (session)
+//   POST   /signout              ends this session                       (session)
+//
 // Storage: mailboxes and the list of labels waiting are in the DB database
 // (D1, always up to date). Each label's bytes are in the LABELS KV namespace
 // as "file:<box>:<id>", written once and read once, and expire on their own.
 
-const VERSION = '0.4.0';
+import { ALLOWED_ORIGINS, corsHeaders, json, randomId, sha256, sameText, COUNT_SQL } from './shared.js';
+import { ACCOUNT_SCHEMA, accountRoute } from './account.js';
 
-// Only the panel's own address may call the Worker from a browser.
-const ALLOWED_ORIGINS = ['https://labelsheetkeeper.github.io'];
+const VERSION = '0.5.0';
 
 const MAX_BYTES = 10 * 1024 * 1024;   // per label
 const MAX_WAITING = 20;               // labels waiting in one mailbox
@@ -48,7 +57,8 @@ const SCHEMA = [
   'CREATE TABLE IF NOT EXISTS boxes (box TEXT PRIMARY KEY, key TEXT NOT NULL, created INTEGER NOT NULL, day TEXT NOT NULL DEFAULT \'\', sent INTEGER NOT NULL DEFAULT 0)',
   'CREATE TABLE IF NOT EXISTS labels (box TEXT NOT NULL, id TEXT NOT NULL, type TEXT NOT NULL, name TEXT NOT NULL, size INTEGER NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (box, id))',
   // Suggestions asked today: who is "*" for everyone, or a one-day hash of an internet address.
-  'CREATE TABLE IF NOT EXISTS usage (day TEXT NOT NULL, who TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, who))'
+  'CREATE TABLE IF NOT EXISTS usage (day TEXT NOT NULL, who TEXT NOT NULL, n INTEGER NOT NULL, PRIMARY KEY (day, who))',
+  ...ACCOUNT_SCHEMA
 ];
 let schemaReady = null;
 function ready(env) {
@@ -57,46 +67,10 @@ function ready(env) {
 }
 
 // ---------- helpers ----------
-function corsHeaders(origin) {
-  const h = { Vary: 'Origin' };
-  if (ALLOWED_ORIGINS.includes(origin)) {
-    h['Access-Control-Allow-Origin'] = origin;
-    h['Access-Control-Allow-Methods'] = 'GET, POST, DELETE, OPTIONS';
-    h['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, X-File-Name';
-    h['Access-Control-Max-Age'] = '86400';
-  }
-  return h;
-}
-
-function json(body, status, origin) {
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store', ...corsHeaders(origin) }
-  });
-}
-
 // The iPhone Shortcut asks for ?reply=text so its notification shows a sentence.
 function message(text, status, origin, asText) {
   if (!asText) return json(status < 300 ? { ok: true, message: text } : { error: text }, status, origin);
   return new Response(text, { status, headers: { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', ...corsHeaders(origin) } });
-}
-
-function randomId(bytes) {
-  const a = new Uint8Array(bytes);
-  crypto.getRandomValues(a);
-  return btoa(String.fromCharCode(...a)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
-}
-
-async function sha256(text) {
-  const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, '0')).join('');
-}
-
-function sameText(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
-  let x = 0;
-  for (let i = 0; i < a.length; i++) x |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return x === 0;
 }
 
 // What the file really is, from its first bytes (the phone's own label isn't trusted).
@@ -220,7 +194,7 @@ async function suggest(request, env, url, origin, ctx) {
   if (outOf.get('*') === today || outOf.get(who) === today) return usedUp();
 
   // Count the question and ask Geoapify at the same time, so the answer comes sooner.
-  const count = 'INSERT INTO usage (day, who, n) VALUES (?, ?, 1) ON CONFLICT (day, who) DO UPDATE SET n = n + 1 RETURNING n';
+  const count = COUNT_SQL;
   const asking = fetch(GEO_URL + encodeURIComponent(text) + '&apiKey=' + encodeURIComponent(env.GEOAPIFY_KEY)).catch(() => null);
   const [all, mine] = await env.DB.batch([env.DB.prepare(count).bind(today, '*'), env.DB.prepare(count).bind(today, who)]);
   if (ctx && Math.random() < 0.02) ctx.waitUntil(env.DB.prepare('DELETE FROM usage WHERE day < ?').bind(today).run());
@@ -275,6 +249,8 @@ export default {
         if (request.method !== 'GET') return json({ error: 'method not allowed' }, 405, origin);
         return await suggest(request, env, url, origin, ctx);
       }
+      const acct = await accountRoute(request, env, parts, origin);
+      if (acct) return acct;
       return json({ error: 'not found' }, 404, origin);
     } catch (e) {
       return json({ error: 'Something went wrong on the server. Try again.' }, 500, origin);

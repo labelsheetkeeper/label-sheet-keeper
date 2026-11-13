@@ -118,6 +118,17 @@ Paste a link to the labels you buy. **Reorder** then:
 
 Buy the kind made for your printer: laser labels (Avery 5160, 5126…) for a laser printer, inkjet labels (8160, 8126…) for an inkjet.
 
+### Sync (optional)
+
+*Sync appears once signing in is set up for the add-in (see "Signing in" under Files below). Until then the panel doesn't show it.*
+
+**Settings › Sync › Turn on sync** signs you in with your Microsoft account in a small window, then keeps these the same on every computer where you turn it on: your address book, return address, logo, your own label sizes, label stock, recent addresses and the panel's general settings. Label sheets, printer adjustments, your Geoapify key and your phone link stay on each computer.
+
+- Everything keeps working without a connection; changes go up when there is one. If the same address is changed on two computers, the later change wins.
+- The first time a computer joins, its addresses are added to the account's, and an address saved on both becomes one contact with both sets of details. The account's settings replace that computer's.
+- **Turn off** stops syncing on that Mac and leaves its addresses and settings there. **Delete my account** removes the account and everything in it from the server; what's on your computers stays.
+- The server knows your account only by a scrambled identifier. It keeps no name, email or password. See [privacy.html](https://labelsheetkeeper.github.io/label-sheet-keeper/privacy.html).
+
 ### Back up and restore settings
 
 **Settings › Backup** (or **Back up or restore settings** in a document that isn't a sheet) makes a Word document holding your address book, return address, label sizes, printer adjustments, label stock and logo. Your Geoapify key is left out unless you tick **Include my Geoapify key**. Save the document somewhere safe; it holds your addresses, so keep it private.
@@ -163,6 +174,10 @@ The version Word shows under the add-in's Security Info comes from `manifest.xml
 | `taskpane.html`, `taskpane.css`, `taskpane.js` | The side panel |
 | `table.html`, `table.css`, `table.js` | The table window |
 | `preview.html`, `preview.js` | The print preview window |
+| `lsk-account.js` | Signing in and sync: what syncs and how changes are merged |
+| `auth.html`, `auth.js` | The sign-in window (Microsoft's sign-in, then back to the panel) |
+| `lsk-config.js` | The app's Microsoft ID. Empty turns signing in off |
+| `privacy.html` | What is kept, where, and for how long |
 | `formats.js` | The list of label sizes |
 | `sheetdoc.js` | Builds Word documents laid out for a label size |
 | `lsk-tools.js` | Reads address lists and contacts, formats US and Canadian addresses, looks up ZIP and postal codes, suggests addresses (Photon or Geoapify), fits text, finds label borders, makes reorder links, numbers, QR codes and Code 128 barcodes, and measures scanned test pages |
@@ -172,5 +187,11 @@ The version Word shows under the add-in's Security Info comes from `manifest.xml
 | `vendor/qrcode-generator/` | qrcode-generator 2.0.4 by Kazuhiko Arase (MIT license), used to make QR codes. "QR Code" is a registered trademark of DENSO WAVE INCORPORATED |
 | `index.html` | This project's web page with the setup steps |
 | `phone.html` | The page a linked phone uses to send labels to the panel |
-| `worker/` | The Label Sheet Keeper server, a Cloudflare Worker at `api.labelsheetkeeper.workers.dev`. Its D1 database holds the phone mailboxes and the labels waiting in them; the labels' files are in KV. GitHub deploys it after every check passes |
+| `worker/` | The Label Sheet Keeper server, a Cloudflare Worker at `api.labelsheetkeeper.workers.dev`. Its D1 database holds the phone mailboxes and the labels waiting in them, and accounts with what they sync (`worker/src/account.js`); the labels' files are in KV. GitHub deploys it after every check passes |
 | `tests/` | Checks GitHub runs before each update goes live (see `tests/README.md`) |
+
+### Signing in
+
+Signing in uses a Microsoft app registration (Microsoft Entra admin center › App registrations): any organization plus personal Microsoft accounts, with three **Single-page application** redirect URIs: `https://labelsheetkeeper.github.io/label-sheet-keeper/auth.html`, `https://labelsheetkeeper.github.io/label-sheet-keeper/taskpane.html` and `brk-multihub://labelsheetkeeper.github.io`. No client secret is used. Its **Application (client) ID** goes in two places: `msClientId` in `lsk-config.js` and `MS_CLIENT_ID` in `worker/wrangler.toml`. It isn't a secret. While both are empty, the panel shows no Sync section and the server refuses sign-ins.
+
+The sign-in window gets an ID token from Microsoft (authorization code with PKCE) and the panel sends it to the server, which checks Microsoft's signature and that the token was made for this app, then gives the panel a session of its own.

@@ -228,6 +228,8 @@ ol.book-list li span::before{counter-increment:wait;content:counter(wait) ". ";c
 .fl-row{display:flex;align-items:center;gap:4px}
 .backup-block{display:grid;gap:6px}
 #backup-none .backup-head{display:none}
+#backup-none .sync-block:not([hidden])~.backup-head{display:block}
+.sync-block{display:grid;gap:6px;padding-bottom:10px;margin-bottom:4px;border-bottom:1px solid var(--line)}
 #backup-none .backup-block{margin-top:2px}
 .steps summary{font-weight:500;color:var(--muted)}
 .steps code{font:11px var(--f-mono);overflow-wrap:anywhere}

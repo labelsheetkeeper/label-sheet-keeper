@@ -6,46 +6,16 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { DatabaseSync } from 'node:sqlite';
+import { FakeD1, FakeKV } from './fakes.mjs';
+import { createHash } from 'node:crypto';
 import worker from '../worker/src/index.js';
+import { forgetKeys } from '../worker/src/account.js';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PANEL = 'https://labelsheetkeeper.github.io';
 let n = 0;
 const ok = (c, m) => { assert(c, m); n++; };
 
-class Stmt {
-  constructor(db, sql, args) { this.db = db; this.sql = sql; this.args = args || []; }
-  bind(...args) { return new Stmt(this.db, this.sql, args); }
-  runNow() {
-    const s = this.db.prepare(this.sql);
-    if (/\bRETURNING\b/i.test(this.sql)) return { success: true, results: s.all(...this.args).map((r) => ({ ...r })) };
-    const r = s.run(...this.args);
-    return { success: true, meta: { changes: Number(r.changes) } };
-  }
-  async run() { return this.runNow(); }
-  async first() { const r = this.db.prepare(this.sql).get(...this.args); return r === undefined ? null : { ...r }; }
-  async all() { return { results: this.db.prepare(this.sql).all(...this.args).map((r) => ({ ...r })) }; }
-}
-class FakeD1 {
-  constructor() { this.db = new DatabaseSync(':memory:'); }
-  prepare(sql) { return new Stmt(this.db, sql); }
-  async batch(stmts) {
-    this.db.exec('BEGIN');
-    try { const out = stmts.map((s) => s.runNow()); this.db.exec('COMMIT'); return out; } catch (e) { this.db.exec('ROLLBACK'); throw e; }
-  }
-  rows(sql, ...args) { return this.db.prepare(sql).all(...args).map((r) => ({ ...r })); }
-}
-class FakeKV {
-  constructor() { this.m = new Map(); this.hidden = new Set(); }
-  async getWithMetadata(key) {
-    const v = this.hidden.has(key) ? null : this.m.get(key);
-    return v ? { value: v.value, metadata: v.metadata || null } : { value: null, metadata: null };
-  }
-  async put(key, value, opts = {}) { this.m.set(key, { value, metadata: opts.metadata, ttl: opts.expirationTtl }); }
-  async delete(key) { this.m.delete(key); }
-  keys(prefix) { return [...this.m.keys()].filter((k) => k.startsWith(prefix)); }
-}
 const db = new FakeD1(), kv = new FakeKV();
 const env = { DB: db, LABELS: kv };
 const call = (p, init = {}) => worker.fetch(new Request('https://api.example.workers.dev' + p, init), env);
@@ -194,6 +164,171 @@ ok(r.status === 429, 'everyone together gets at most 2,700 a day, under Geoapify
 before = geoCalls.length;
 r = await ask('10 Maple', { Origin: PANEL, 'CF-Connecting-IP': '198.51.100.10' });
 ok(r.status === 429 && geoCalls.length === before, 'and then nobody’s question goes to Geoapify until tomorrow');
+globalThis.fetch = realFetch;
+
+// ---- signing in with Microsoft ----
+// Stand-in for Microsoft: our own signing key, published the way Microsoft publishes its keys.
+const CLIENT = '11111111-2222-3333-4444-555555555555';
+const MSA = '9188040d-6c67-4c5b-b112-36a304b66dad';   // Microsoft's "tenant" for personal accounts
+const WORK = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
+const mkKey = () => crypto.subtle.generateKey({ name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1, 0, 1]), hash: 'SHA-256' }, true, ['sign', 'verify']);
+const k1 = await mkKey(), k2 = await mkKey(), stranger = await mkKey();
+const pub = async (k, kid, issuer) => { const j = await crypto.subtle.exportKey('jwk', k.publicKey); return { kid, kty: 'RSA', use: 'sig', n: j.n, e: j.e, issuer }; };
+const msKeys = { keys: [
+  await pub(k1, 'any', 'https://login.microsoftonline.com/{tenantid}/v2.0'),
+  await pub(k2, 'personal', 'https://login.microsoftonline.com/' + MSA + '/v2.0')
+] };
+let keyFetches = 0, keysDown = false;
+globalThis.fetch = async (u) => {
+  if (String(u) !== 'https://login.microsoftonline.com/common/discovery/v2.0/keys') throw new Error('unexpected fetch ' + u);
+  keyFetches++;
+  return keysDown ? new Response('down', { status: 500 }) : new Response(JSON.stringify(msKeys));
+};
+const b64u = (x) => Buffer.from(x).toString('base64url');
+const nowS = () => Math.floor(Date.now() / 1000);
+async function idToken(over = {}, o = {}) {
+  const tid = over.tid || MSA;
+  const claims = { aud: CLIENT, iss: 'https://login.microsoftonline.com/' + tid + '/v2.0', tid, oid: '00000000-0000-0000-1234-56789abcdef0', sub: 'pairwise', name: 'Pat Example', preferred_username: 'pat@example.com', iat: nowS() - 10, nbf: nowS() - 10, exp: nowS() + 3600, ...over };
+  const head = { typ: 'JWT', alg: o.alg || 'RS256', kid: o.kid || (tid === MSA ? 'personal' : 'any') };
+  const data = b64u(JSON.stringify(head)) + '.' + b64u(JSON.stringify(claims));
+  const sig = await crypto.subtle.sign('RSASSA-PKCS1-v1_5', (o.key || (head.kid === 'personal' ? k2 : k1)).privateKey, new TextEncoder().encode(data));
+  return data + '.' + b64u(sig);
+}
+const signIn = (token, headers = { Origin: PANEL, 'CF-Connecting-IP': '203.0.113.50' }) => call('/auth/microsoft', { method: 'POST', headers, body: JSON.stringify({ id_token: token }) });
+
+r = await signIn(await idToken());
+ok(r.status === 503 && keyFetches === 0, 'until the app is registered with Microsoft, sign-in says it isn’t set up');
+env.MS_CLIENT_ID = CLIENT;
+r = await signIn(await idToken(), { Origin: 'https://example.com' });
+ok(r.status === 403, 'only the panel can sign in');
+ok((await call('/auth/microsoft', { headers: { Origin: PANEL } })).status === 405, 'signing in is a POST');
+r = await signIn(await idToken());
+body = await r.json();
+ok(r.status === 201 && /^[A-Za-z0-9_-]{43}$/.test(body.session) && body.isNew === true, 'a genuine Microsoft sign-in gets a session ' + r.status);
+const sessA = body.session;
+const dump = JSON.stringify([db.rows('SELECT * FROM accounts'), db.rows('SELECT * FROM sessions')]);
+ok(!/pat@example|Pat Example|56789abcdef0|9188040d/.test(dump) && !dump.includes(sessA), 'no name, email, Microsoft ID or session token is stored, only hashes');
+ok(db.rows('SELECT id FROM accounts').length === 1 && db.rows('SELECT id FROM accounts')[0].id.length === 40, 'the account is known by a hash');
+r = await signIn(await idToken());
+body = await r.json();
+const sessB = body.session;
+ok(r.status === 201 && body.isNew === false && sessB !== sessA && db.rows('SELECT id FROM accounts').length === 1 && db.rows('SELECT hash FROM sessions').length === 2, 'the same person on another computer gets the same account, and a session of their own');
+ok(keyFetches === 1, 'Microsoft’s keys are fetched once and remembered ' + keyFetches);
+
+const bad = async (label, token) => { const x = await signIn(token); ok(x.status === 401, label + ' (' + x.status + ')'); };
+await bad('a token made for another app is refused', await idToken({ aud: '99999999-2222-3333-4444-555555555555' }));
+await bad('an expired token is refused', await idToken({ exp: nowS() - 600 }));
+await bad('a token not valid yet is refused', await idToken({ nbf: nowS() + 3600 }));
+await bad('a token signed by someone else is refused', await idToken({}, { key: stranger }));
+await bad('an unsigned token is refused', (await idToken({}, { alg: 'none' })).replace(/\.[^.]*$/, '.'));
+await bad('an issuer that doesn’t match its organization is refused', await idToken({ iss: 'https://login.microsoftonline.com/' + WORK + '/v2.0' }));
+await bad('a key for personal accounts can’t vouch for an organization', await idToken({ tid: WORK }, { kid: 'personal', key: k2 }));
+await bad('a token with no person in it is refused', await idToken({ oid: undefined }));
+await bad('a changed token is refused', (await idToken()).replace(/\.([^.]+)\./, (m, p) => '.' + b64u(JSON.stringify({ ...JSON.parse(Buffer.from(p, 'base64url')), oid: '00000000-0000-0000-9999-999999999999' })) + '.'));
+await bad('nonsense is refused', 'not.a.token');
+await bad('nothing is refused', '');
+ok(db.rows('SELECT id FROM accounts').length === 1, 'and none of those made an account');
+r = await signIn(await idToken({ tid: WORK, oid: '00000000-0000-0000-1234-56789abcdef0' }));
+const sessWork = (await r.json()).session;
+ok(r.status === 201 && db.rows('SELECT id FROM accounts').length === 2, 'the same ID in a different organization is a different person');
+forgetKeys(); keysDown = true;
+r = await signIn(await idToken());
+ok(r.status === 503 && /Microsoft couldn’t be reached/.test((await r.json()).error), 'if Microsoft’s keys can’t be fetched, it says so');
+keysDown = false;
+db.db.prepare("UPDATE usage SET n = 100 WHERE who LIKE 'auth:%'").run();
+r = await signIn(await idToken());
+ok(r.status === 429, 'one internet address gets at most 100 sign-ins a day');
+r = await signIn(await idToken(), { Origin: PANEL, 'CF-Connecting-IP': '203.0.113.51' });
+ok(r.status === 201, 'others can still sign in');
+const sessC = (await r.json()).session;
+
+// ---- syncing ----
+const acctOf = (sess) => db.rows('SELECT account FROM sessions WHERE hash = ?', createHash('sha256').update(sess).digest('hex'))[0].account;
+const acctA = acctOf(sessA);
+const sync = (sess, since, push = []) => call('/sync', { method: 'POST', headers: { Origin: PANEL, Authorization: 'Bearer ' + sess }, body: JSON.stringify({ since, push }) });
+const item = (c, id, m, v, d) => ({ c, id, m, d: d ? 1 : 0, v: d ? null : JSON.stringify(v) });
+ok((await call('/sync', { method: 'POST', headers: { Origin: PANEL }, body: '{}' })).status === 401, 'syncing needs a session');
+ok((await sync('x'.repeat(43), 0)).status === 401, 'a made-up session is refused');
+const t0 = Date.now() - 100000;
+r = await sync(sessA, 0, [item('book', 'c1', t0, { name: 'Ann' }), item('book', 'c2', t0, { name: 'Bob' }), item('set', 'homeCountry', t0, 'US')]);
+body = await r.json();
+ok(r.status === 200 && body.pull.length === 0 && body.next === 3 && body.more === false, 'the first computer sends its changes and gets nothing back ' + JSON.stringify(body));
+r = await sync(sessB, 0);
+body = await r.json();
+ok(body.pull.length === 3 && body.next === 3 && body.pull.map((x) => x.id).join() === 'c1,c2,homeCountry' && body.pull[0].v === '{"name":"Ann"}', 'the second computer gets them ' + JSON.stringify(body.pull.map((x) => x.id)));
+r = await sync(sessB, 3);
+ok((await r.json()).pull.length === 0, 'and nothing twice');
+r = await sync(sessB, 3, [item('book', 'c1', t0 + 500, { name: 'Ann Lee' })]);
+body = await r.json();
+ok(body.pull.length === 0 && body.next === 4, 'a change from the second computer is stored');
+r = await sync(sessA, 3);
+body = await r.json();
+ok(body.pull.length === 1 && body.pull[0].v === '{"name":"Ann Lee"}' && body.next === 4, 'and reaches the first');
+r = await sync(sessA, 4, [item('book', 'c1', t0 + 100, { name: 'Ann Old' })]);
+body = await r.json();
+ok(body.pull.length === 1 && body.pull[0].v === '{"name":"Ann Lee"}' && db.rows("SELECT v FROM records WHERE id = 'c1'")[0].v === '{"name":"Ann Lee"}', 'an older change loses, and the newer one is handed back');
+r = await sync(sessA, body.next, [item('book', 'c1', t0 + 500, { name: 'Ann Lee' })]);
+body = await r.json();
+ok(body.pull.length === 1 && db.rows("SELECT rev FROM records WHERE id = 'c1'")[0].rev === 4, 'sending the same change again changes nothing');
+r = await sync(sessA, body.next, [item('book', 'c2', t0 + 900, null, true)]);
+body = await r.json();
+r = await sync(sessB, 4);
+body = await r.json();
+ok(body.pull.length === 1 && body.pull[0].id === 'c2' && body.pull[0].d === 1 && body.pull[0].v === null, 'a deleted address is passed on as deleted');
+r = await sync(sessB, body.next, [item('book', 'c2', t0 + 200, { name: 'Bob again' })]);
+ok(db.rows("SELECT d FROM records WHERE id = 'c2'")[0].d === 1, 'and an older edit doesn’t bring it back');
+r = await sync(sessB, 0, [item('set', 'clock', Date.now() + 9e9, 'ahead')]);
+ok(db.rows("SELECT m FROM records WHERE id = 'clock'")[0].m < Date.now() + 6 * 60 * 1000, 'a clock set far ahead can’t make a change win forever');
+ok((await (await sync(sessWork, 0)).json()).pull.length === 0, 'another person’s account sees none of it');
+
+const refuse = async (label, push, status = 400) => { const x = await sync(sessA, 0, push); ok(x.status === status, label + ' (' + x.status + ')'); };
+await refuse('an unknown kind of record is refused', [item('other', 'x', t0, 1)]);
+await refuse('an odd id is refused', [item('book', 'has space', t0, 1)]);
+await refuse('a record with no time is refused', [{ c: 'book', id: 'x', v: '1' }]);
+await refuse('a record with no content is refused', [{ c: 'book', id: 'x', m: t0 }]);
+await refuse('the same record twice in one request is refused', [item('book', 'x', t0, 1), item('book', 'x', t0 + 1, 2)]);
+await refuse('a record over 300 KB is refused', [{ c: 'set', id: 'big', m: t0, v: 'x'.repeat(300 * 1024 + 1) }]);
+await refuse('more than 300 records at once are refused', Array.from({ length: 301 }, (_, i) => item('book', 'm' + i, t0, i)));
+ok((await call('/sync', { method: 'POST', headers: { Origin: PANEL, Authorization: 'Bearer ' + sessA }, body: 'not json' })).status === 400, 'a request that isn’t JSON is refused');
+ok((await call('/sync', { headers: { Origin: PANEL, Authorization: 'Bearer ' + sessA } })).status === 405, 'syncing is a POST');
+
+// Many records come back a page at a time, each exactly once.
+for (let b = 0; b < 3; b++) await sync(sessA, 0, Array.from({ length: 250 }, (_, i) => item('book', 'p' + b + '_' + i, t0 + i, { n: i })));
+let got1 = new Map(), since = 0, pages = 0, last;
+do { last = await (await sync(sessC, since)).json(); last.pull.forEach((x) => got1.set(x.c + '/' + x.id, (got1.get(x.c + '/' + x.id) || 0) + 1)); since = last.next; pages++; } while (last.more && pages < 20);
+const total = db.rows('SELECT COUNT(*) AS n FROM records WHERE account = ?', acctA)[0].n;
+ok(pages === 3 && got1.size === total && [...got1.values()].every((v) => v === 1) && total === 754, 'a new computer gets everything in pages, each record once ' + JSON.stringify([pages, got1.size, total]));
+ok((await (await sync(sessC, since)).json()).pull.length === 0, 'and then it’s up to date');
+
+r = await call('/account', { headers: { Origin: PANEL, Authorization: 'Bearer ' + sessA } });
+body = await r.json();
+ok(r.status === 200 && body.records === 753 && body.computers === 3 && body.bytes > 0, 'the account says how much it holds ' + JSON.stringify(body));
+db.db.prepare('UPDATE accounts SET pushes = 3000, day = ? WHERE id = ?').run(new Date().toISOString().slice(0, 10), acctA);
+r = await sync(sessA, 0, [item('set', 'x', Date.now(), 1)]);
+ok(r.status === 429, 'at most 3,000 requests with changes a day');
+ok((await sync(sessA, since)).status === 200, 'checking for changes still works');
+db.db.prepare("UPDATE accounts SET day = '2000-01-01' WHERE id = ?").run(acctA);
+ok((await sync(sessA, 0, [item('set', 'x', Date.now(), 1)])).status === 200 && db.rows('SELECT pushes FROM accounts WHERE id = ?', acctA)[0].pushes === 1, 'the count starts over the next day');
+const fill = db.db.prepare("INSERT INTO records (account, c, id, m, d, v, rev) VALUES (?, 'book', ?, 1, 0, '1', 0)");
+db.db.exec('BEGIN'); for (let i = 0; i < 19300; i++) fill.run(acctA, 'f' + i); db.db.exec('COMMIT');
+r = await sync(sessA, 0, [item('book', 'one-too-many', Date.now(), 1)]);
+ok(r.status === 413 && /account is full/.test((await r.json()).error), 'an account holds at most 20,000 records');
+ok((await sync(sessA, 0, [item('book', 'f1', Date.now(), null, true)])).status === 200, 'deleting still works when it’s full');
+db.db.prepare("DELETE FROM records WHERE id LIKE 'f%'").run();
+
+// ---- signing out and deleting the account ----
+r = await call('/signout', { method: 'POST', headers: { Origin: PANEL, Authorization: 'Bearer ' + sessC } });
+ok(r.status === 200 && (await sync(sessC, 0)).status === 401, 'signing out ends that computer’s session');
+ok((await sync(sessA, 0)).status === 200, 'and not the others');
+db.db.prepare('UPDATE sessions SET seen = ? WHERE hash = ?').run(Date.now() - 401 * 24 * 3600 * 1000, createHash('sha256').update(sessB).digest('hex'));
+ok((await sync(sessB, 0)).status === 401 && (await sync(sessA, 0)).status === 200, 'a session unused for over 400 days ends');
+const live = sessA;
+r = await call('/account', { method: 'DELETE', headers: { Origin: PANEL, Authorization: 'Bearer ' + live } });
+ok(r.status === 200 && db.rows('SELECT id FROM accounts WHERE id = ?', acctA).length === 0 && db.rows('SELECT id FROM records WHERE account = ?', acctA).length === 0 && db.rows('SELECT hash FROM sessions WHERE account = ?', acctA).length === 0, 'deleting the account removes it, its records and its sessions');
+ok((await sync(live, 0)).status === 401, 'and its sessions stop working');
+ok(db.rows('SELECT id FROM accounts').length === 1 && (await sync(sessWork, 0)).status === 200, 'other people’s accounts are untouched');
+for (let i = 0; i < 31; i++) await signIn(await idToken({ tid: WORK }), { Origin: PANEL, 'CF-Connecting-IP': '203.0.113.' + (60 + i) });
+ok(db.rows('SELECT hash FROM sessions').length === 30, 'one account keeps at most 30 computers signed in');
 globalThis.fetch = realFetch;
 
 console.log('all', n, 'worker checks passed');

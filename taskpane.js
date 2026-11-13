@@ -11,7 +11,7 @@
 (function () {
   'use strict';
 
-  var VERSION = '1.12.1';
+  var VERSION = '1.13';
   var ADDIN_ID = '8d491c85-a76d-4d26-a6f5-b7b2dd4a1711';   // must match manifest.xml <Id>
   var F = window.LSK_FORMATS;
   var S = window.LSK_SHEET;
@@ -56,6 +56,10 @@
   var chosenId = F.formats.length ? F.formats[0].id : '';
   var chain = Promise.resolve();
   var busy = false;
+  // Signing in and sync (lsk-account.js). Off and hidden until the app's Microsoft
+  // registration is filled in (lsk-config.js).
+  var MS_CLIENT = (window.LSK_CONFIG && window.LSK_CONFIG.msClientId) || '';
+  var ACCT = null;
 
   // ---------- small helpers ----------
   function store(key, value) {
@@ -63,6 +67,7 @@
       if (value === undefined) return localStorage.getItem(key);
       if (value === null) localStorage.removeItem(key); else localStorage.setItem(key, value);
     } catch (e) { /* storage full or blocked */ }
+    if (ACCT) ACCT.touch(key);      // with sync on, the change goes to the account shortly
     return null;
   }
   function storeJson(key, value) {
@@ -1944,11 +1949,94 @@
     }, spots.map(function (l) { return l.length ? parasFor(l) : null; }));
   }
 
+  // ---------- your account and sync ----------
+  // Signing in is with Microsoft, in a small window (auth.html). After that the
+  // address book and the settings that follow you are kept the same on every
+  // computer by lsk-account.js; this part is the Settings section and timing.
+  var signDlg = null, redrawTimer = 0;
+  function syncOn() { return !!(ACCT && ACCT.status().on); }
+  function startAccount() {
+    if (!MS_CLIENT || !window.LSK_ACCOUNT) return;
+    ACCT = window.LSK_ACCOUNT.make({
+      storage: window.localStorage, api: API,
+      // Another computer changed something: show it.
+      changed: function () { codesShown = false; redrawSoon(); },
+      status: function () { renderSync(); }
+    });
+    if (ACCT.status().on) ACCT.soon(1500);
+    setInterval(function () { if (syncOn() && !document.hidden) ACCT.sync().catch(function () { /* shown in Settings */ }); }, 10 * 60 * 1000);
+    document.addEventListener('visibilitychange', function () { if (!document.hidden && syncOn()) ACCT.soon(1000); });
+    // Another Word window's panel synced or changed something.
+    window.addEventListener('storage', function (e) {
+      if (!e.key) return;
+      if (e.key === window.LSK_ACCOUNT.KEY.acct) renderSync();
+      else if (window.LSK_ACCOUNT.isSynced(e.key)) redrawSoon();
+    });
+  }
+  function redrawSoon() {
+    clearTimeout(redrawTimer);
+    redrawTimer = setTimeout(function () { if (st.kind !== 'loading') render(); }, 150);
+  }
+  function renderSync() {
+    var box = $('sync-block');
+    box.hidden = !ACCT;
+    $('backup-none-title').textContent = ACCT ? 'Sync, back up or restore settings' : 'Back up or restore settings';
+    if (!ACCT) return;
+    var s = ACCT.status(), who = s.email || s.name || 'your Microsoft account';
+    $('sync-on').hidden = s.on;
+    $('sync-now').hidden = $('sync-off').hidden = $('sync-delete').hidden = !s.on;
+    $('sync-now').disabled = s.state === 'syncing';
+    var text;
+    if (!s.on) text = s.error || 'Sign in with Microsoft to keep your address book and settings the same on every computer.';
+    else if (s.state === 'syncing') text = 'Syncing as ' + who + '…';
+    else if (s.state === 'error') text = 'Syncing as ' + who + '. ' + s.error;
+    else text = 'Syncing as ' + who + (s.at ? '. Up to date at ' + timeOnly(s.at) + '.' : '.');
+    $('sync-status').textContent = text;
+    $('sync-status').className = s.on && s.state === 'error' ? 'hint warn' : 'hint';
+  }
+  // Opens Microsoft's sign-in in its own window and resolves to the ID token it ends with.
+  function microsoftSignIn() {
+    return new Promise(function (resolve, reject) {
+      if (!Office.context.ui || !Office.context.ui.displayDialogAsync) { reject(userError('This version of Word can’t open the sign-in window. Update Word and try again.')); return; }
+      try { if (signDlg) signDlg.close(); } catch (e) { /* already closed */ }
+      var url = new URL('auth.html', location.href.split('?')[0]).href + '?t=' + Date.now();
+      Office.context.ui.displayDialogAsync(url, { height: 65, width: 32, promptBeforeOpen: false }, function (res) {
+        if (res.status !== Office.AsyncResultStatus.Succeeded) { reject(userError('The sign-in window couldn’t open' + (res.error && res.error.message ? ': ' + res.error.message : '') + '.')); return; }
+        var dlg = signDlg = res.value, done = false;
+        var end = function () { done = true; try { dlg.close(); } catch (e) { /* already closed */ } if (signDlg === dlg) signDlg = null; };
+        dlg.addEventHandler(Office.EventType.DialogMessageReceived, function (arg) {
+          var msg = null;
+          try { msg = JSON.parse(arg.message); } catch (e) { return; }
+          if (!msg || done) return;
+          if (msg.type === 'signin' && msg.idToken) { end(); resolve(msg.idToken); }
+          else if (msg.type === 'signin-error') { end(); reject(msg.error === 'cancelled' ? null : userError('Signing in didn’t finish. Try again.')); }
+        });
+        // The window was closed without signing in.
+        dlg.addEventHandler(Office.EventType.DialogEventReceived, function () { if (!done) { done = true; if (signDlg === dlg) signDlg = null; reject(null); } });
+      });
+    });
+  }
+  function turnOnSync() {
+    if (!ACCT) return;
+    $('sync-on').disabled = true;
+    microsoftSignIn().then(function (token) {
+      $('sync-status').textContent = 'Signing in…';
+      return ACCT.signIn(token);
+    }).then(function (who) {
+      renderSync();
+      return ACCT.sync().then(function () {
+        say(who.isNew ? 'Sync is on. This Mac’s address book and settings are now in your account.'
+          : 'Sync is on. Your account’s address book and settings are here now, along with what this Mac already had.');
+      });
+    }).catch(function (e) {
+      if (e) say(e.userMessage || e.message || 'Signing in didn’t work. Try again.', 'warn');
+    }).then(function () { $('sync-on').disabled = false; renderSync(); render(); });
+  }
   // ---------- backing up and restoring settings ----------
   // A backup is a Word document holding this Mac's settings (address book,
   // return address, sizes, adjustments, stock, logo...). Things that only make
   // sense on this Mac, or for a moment, stay out.
-  var BACKUP_SKIP = /^lsk\.(tableInfo|tableDraft|addinRef|fillJob|sheets|testCheck\.|testNudge\.|last\.|phone$|preview$)/;
+  var BACKUP_SKIP = /^lsk\.(tableInfo|tableDraft|addinRef|fillJob|sheets|testCheck\.|testNudge\.|last\.|phone$|preview$|acct|auth\.)/;
   function backupKeys(withKey) {
     var out = {};
     try {
@@ -2041,9 +2129,11 @@
       });
     } catch (e) { throw userError('The settings couldn’t be saved on this Mac.'); }
     codesShown = false;
+    if (ACCT) ACCT.touch();
   }
   function askRestore(p, after) {
-    ask('Restore the settings from the backup made ' + fmtDate(p.at) + '? They replace the Label Sheet Keeper settings on this Mac.', 'Restore', function () {
+    var where = syncOn() ? 'on this Mac and, with sync on, on your other computers.' : 'on this Mac.';
+    ask('Restore the settings from the backup made ' + fmtDate(p.at) + '? They replace the Label Sheet Keeper settings ' + where, 'Restore', function () {
       try { restoreBackup(p); } catch (e) { showError(e); return; }
       if (after) after();
       say('Restored your settings from the backup made ' + fmtDate(p.at) + '.');
@@ -2078,7 +2168,7 @@
     if ($('backup-block').parentNode !== slot) slot.appendChild($('backup-block'));
     $('backup-key-row').hidden = !store(LS.geoKey);
     if (st.kind === 'backup') { renderBackupView(); return; }
-    if (st.kind === 'none' || choosing) { renderChooser(); show('v-none'); return; }
+    if (st.kind === 'none' || choosing) { renderChooser(); renderSync(); show('v-none'); return; }
     if (st.kind === 'broken') {
       $('broken-msg').textContent = st.reason;
       $('repair-btn').hidden = !st.fixable;
@@ -2107,6 +2197,7 @@
     renderAbout();
     renderPhone();
     renderPhoneIn();
+    renderSync();
   }
 
   function thumb(f, width) {
@@ -3464,6 +3555,21 @@
     $('confirm-yes').addEventListener('click', function () { var a = pendingConfirm; closeAsk(); if (a) a(); });
     $('confirm-no').addEventListener('click', closeAsk);
     $('preview-btn').addEventListener('click', openPreview);
+    $('sync-on').addEventListener('click', turnOnSync);
+    $('sync-now').addEventListener('click', function () {
+      ACCT.sync().then(function () { say('Synced.'); }, function () { say(ACCT.status().error || 'Syncing didn’t work. It will try again.', 'warn'); });
+    });
+    $('sync-off').addEventListener('click', function () {
+      ask('Turn off sync on this Mac? Your addresses and settings stay here; they stop updating from your other computers.', 'Turn off', function () {
+        ACCT.signOut().then(function () { renderSync(); say('Sync is off on this Mac.'); });
+      });
+    });
+    $('sync-delete').addEventListener('click', function () {
+      ask('Delete your account and everything in it from the Label Sheet Keeper server? Your addresses and settings stay on this Mac. Other computers keep theirs and stop syncing.', 'Delete account', function () {
+        ACCT.remove().then(function () { renderSync(); say('Your account and everything in it were deleted from the server.'); },
+          function () { renderSync(); say(ACCT.status().error || 'The account couldn’t be deleted just now. Try again.', 'warn'); });
+      }, true);
+    });
     $('dsugg-close').addEventListener('click', function () { if (ds.at) ds.closed = ds.at.n + ':' + ds.at.index; closeDocSugg(); });
     $('confirm-alt').addEventListener('click', function () { var a = pendingAlt; closeAsk(); if (a) a(); });
     wireFileLabels();
@@ -3797,6 +3903,7 @@
         return;
       }
       if (!Office.context.requirements.isSetSupported('WordApi', '1.3')) { show('v-old'); return; }
+      startAccount();
       wire();
       wireTips();
       refresh();
@@ -3806,7 +3913,7 @@
       findAddinRef().then(function () { if (st.kind === 'sheet') renderAbout(); });
       try { Office.context.document.addHandlerAsync(Office.EventType.DocumentSelectionChanged, onSelectionChanged); } catch (e) { /* older Word */ }
       window.addEventListener('pagehide', forgetIfUnsaved);
-      window.LSK_TEST = { st: function () { return st; }, ship: ship, output: output, handleFile: handleFile, fillFromRows: fillFromRows, checkPrinted: checkPrinted, checkFillJob: checkFillJob, scan: function () { return scanResult; }, checkPhone: checkPhone, phone: phone, backupKeys: backupKeys };
+      window.LSK_TEST = { st: function () { return st; }, ship: ship, output: output, handleFile: handleFile, fillFromRows: fillFromRows, checkPrinted: checkPrinted, checkFillJob: checkFillJob, scan: function () { return scanResult; }, checkPhone: checkPhone, phone: phone, backupKeys: backupKeys, acct: function () { return ACCT; } };
     });
   }
   start();

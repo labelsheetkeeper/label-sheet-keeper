@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy – Label Sheet Keeper</title>
+<link rel="icon" href="assets/icon-32.png">
+<style>
+/* One readable column, matching the home page. */
+:root{--bg:#F3F6F5;--surface:#FFFFFF;--line:#D3DAD7;--ink:#17212A;--muted:#566570;--accent:#0D6B66;
+  --f:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;color-scheme:light}
+@media (prefers-color-scheme:dark){:root{--bg:#161B1E;--surface:#1F262A;--line:#334047;--ink:#E4EAEC;--muted:#9AA9AF;--accent:#5BC4B9;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.6 var(--f)}
+main{max-width:680px;margin:0 auto;padding:40px 16px 64px;display:grid;gap:20px}
+h1{margin:0;font-size:clamp(26px,5vw,34px);line-height:1.1;letter-spacing:-.015em}
+.lede{margin:8px 0 0;color:var(--muted)}
+h2{margin:0 0 8px;font-size:18px}
+section{background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:18px 20px}
+p{margin:0 0 10px} p:last-child{margin-bottom:0}
+ul{margin:0;padding-left:20px;display:grid;gap:6px}
+a{color:var(--accent)}
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Privacy</h1>
+    <p class="lede">What Label Sheet Keeper keeps, where, and for how long. Last updated November 9, 2026.</p>
+  </header>
+
+  <section>
+    <h2>The short version</h2>
+    <ul>
+      <li>Your label sheets are Word documents on your own computer. Label Sheet Keeper never sends them anywhere.</li>
+      <li>Your address book and settings stay on your computer unless you turn on sync.</li>
+      <li>There are no ads and no tracking, and nothing is sold or shared for marketing.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>On your computer</h2>
+    <p>The panel keeps your address book, return address, logo, label sizes, printer adjustments, label stock and settings in its own storage on your computer. Each sheet's record (which labels are used, its print history) is saved inside that sheet's Word document.</p>
+    <p>A backup you make is a Word document that you save wherever you choose.</p>
+  </section>
+
+  <section>
+    <h2>Address suggestions</h2>
+    <p>When suggestions are on, the street you're typing is sent to the Label Sheet Keeper server, which asks <a href="https://www.geoapify.com/">Geoapify</a> for matching addresses. If the day's shared lookups are used up or the server is busy, it is sent to <a href="https://photon.komoot.io/">Photon by Komoot</a> instead. A ZIP or postal code typed on its own is sent to <a href="https://www.zippopotam.us/">Zippopotam.us</a> to find the city. With a Geoapify key of your own, these go straight to Geoapify.</p>
+    <p>The server doesn't keep what you type. To enforce a daily limit it keeps a count for each internet address, stored as a scrambled value that changes every day and is deleted afterward.</p>
+    <p>You can turn suggestions off in Settings.</p>
+  </section>
+
+  <section>
+    <h2>Labels sent from your phone</h2>
+    <p>If you link your phone, each label you send waits on the Label Sheet Keeper server until your panel picks it up, then it is deleted. A label that isn't picked up is deleted after 7 days. Unlinking deletes anything still waiting.</p>
+  </section>
+
+  <section>
+    <h2>Sync (optional)</h2>
+    <p>Sync is off unless you turn it on by signing in with your Microsoft account. Microsoft handles the sign-in; Label Sheet Keeper never sees your password.</p>
+    <p>With sync on, the server stores:</p>
+    <ul>
+      <li>your address book: the names, addresses, phone numbers, emails and groups you saved;</li>
+      <li>your return address, logo, your own label sizes, label stock counts, recent addresses and the panel's general settings;</li>
+      <li>a scrambled identifier for your Microsoft account, so the server can tell your computers belong together. It does not store your name, email address or password.</li>
+    </ul>
+    <p>Your name and email from Microsoft are kept only on your computer, to show who is signed in.</p>
+    <p>Sign-ins are counted per internet address the same way as address lookups, to stop abuse.</p>
+    <p>Not synced: label sheets, printer adjustments, your Geoapify key and your phone link.</p>
+    <p><b>Turn off</b> in Settings stops syncing on that computer. <b>Delete my account</b> removes your account and everything in it from the server right away. What is on your computers stays there.</p>
+  </section>
+
+  <section>
+    <h2>Who else is involved</h2>
+    <ul>
+      <li><a href="https://pages.github.com/">GitHub Pages</a> delivers the panel's files, and Microsoft delivers the Office library the panel needs. Like any website, they see the internet address of the computer asking.</li>
+      <li><a href="https://www.cloudflare.com/">Cloudflare</a> runs the Label Sheet Keeper server and holds what it stores.</li>
+      <li>Microsoft handles sign-in when you turn on sync.</li>
+      <li>Geoapify, Photon and Zippopotam.us answer address lookups, as described above.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Questions</h2>
+    <p>Ask at <a href="https://github.com/labelsheetkeeper/label-sheet-keeper/issues">github.com/labelsheetkeeper/label-sheet-keeper/issues</a>. Please don't put personal details in an issue; they are public.</p>
+    <p>If this page changes in a way that matters, the date at the top changes with it.</p>
+    <p><a href="./">Back to Label Sheet Keeper</a></p>
+  </section>
+</main>
+</body>
+</html>
