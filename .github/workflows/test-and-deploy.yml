@@ -104,6 +104,23 @@ jobs:
           mkdir _site
           git archive HEAD -- . ':(exclude)tests' ':(exclude).github' ':(exclude)worker' | tar -x -C _site
 
+      # Each page adds "?t=<LSK_T>" to the files it loads. In the repository LSK_T is
+      # the current time, so a developer always gets fresh files. Here it becomes this
+      # release's stamp, so browsers can keep the files until the next release.
+      - name: Stamp the pages with this release
+        run: |
+          stamp=$(git rev-parse --short=12 HEAD)
+          pages=$(grep -rl --include='*.html' 'LSK_T' _site || true)
+          [ -n "$pages" ] || { echo "::error title=Release stamp::No page uses LSK_T any more; update this step."; exit 1; }
+          for p in $pages; do
+            if ! grep -q 'window.LSK_T = Date.now();' "$p"; then
+              echo "::error title=Release stamp::$p uses LSK_T but doesn't have the exact line: window.LSK_T = Date.now();"
+              exit 1
+            fi
+            sed -i "s/window.LSK_T = Date.now();/window.LSK_T = '$stamp';/" "$p"
+          done
+          echo "::notice title=Release stamp::$stamp on $(echo "$pages" | wc -l) pages"
+
       - uses: actions/configure-pages@v6
 
       - uses: actions/upload-pages-artifact@v5
@@ -118,6 +135,10 @@ jobs:
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    env:
+      # The web address the panel is served from: the only origin the Worker answers
+      # browsers from. Keep it the same as PANEL_ORIGINS in worker/wrangler.toml.
+      PANEL_ORIGIN: https://labelsheetkeeper.github.io
     concurrency:
       group: worker
       cancel-in-progress: false
@@ -167,7 +188,7 @@ jobs:
         run: |
           fail() { echo "::error title=Phone mailbox check::$1"; exit 1; }
           PDF=tests/fixtures/sample-return-label.pdf
-          pair=$(curl -fsS -X POST -H 'Origin: https://labelsheetkeeper.github.io' "$WORKER_URL/pair") || fail "Linking failed"
+          pair=$(curl -fsS -X POST -H "Origin: $PANEL_ORIGIN" "$WORKER_URL/pair") || fail "Linking failed"
           box=$(echo "$pair" | jq -r .box); key=$(echo "$pair" | jq -r .key)
           [ "${#box}" -eq 22 ] || fail "No mailbox in the answer"
           echo "::add-mask::$key"
@@ -199,7 +220,7 @@ jobs:
       # Address suggestions for everyone: works once the GEOAPIFY_KEY secret is saved in Cloudflare.
       - name: Check address suggestions
         run: |
-          code=$(curl -s -o sugg.json -w '%{http_code}' -H 'Origin: https://labelsheetkeeper.github.io' "$WORKER_URL/suggest?text=1%20Beacon%20St%2C%20Boston")
+          code=$(curl -s -o sugg.json -w '%{http_code}' -H "Origin: $PANEL_ORIGIN" "$WORKER_URL/suggest?text=1%20Beacon%20St%2C%20Boston")
           case "$code" in
             200) echo "::notice title=Address suggestions::Working: $(jq -r '[.results[].address_line1] | join("; ")' sugg.json)" ;;
             503) echo "::notice title=Address suggestions::Not set up yet ($(jq -r .error sugg.json)). The table window uses Photon until the GEOAPIFY_KEY secret is saved." ;;
@@ -210,8 +231,8 @@ jobs:
       # Accounts: off until the app's Microsoft ID is set (MS_CLIENT_ID in worker/wrangler.toml).
       - name: Check signing in
         run: |
-          code=$(curl -s -o auth.json -w '%{http_code}' -X POST -H 'Origin: https://labelsheetkeeper.github.io' -H 'Content-Type: application/json' -d '{"id_token":"not.a.token"}' "$WORKER_URL/auth/microsoft")
-          none=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H 'Origin: https://labelsheetkeeper.github.io' -d '{}' "$WORKER_URL/sync")
+          code=$(curl -s -o auth.json -w '%{http_code}' -X POST -H "Origin: $PANEL_ORIGIN" -H 'Content-Type: application/json' -d '{"id_token":"not.a.token"}' "$WORKER_URL/auth/microsoft")
+          none=$(curl -s -o /dev/null -w '%{http_code}' -X POST -H "Origin: $PANEL_ORIGIN" -d '{}' "$WORKER_URL/sync")
           [ "$none" = "401" ] || { echo "::error title=Signing in::Syncing without a session answered $none, not 401"; exit 1; }
           case "$code" in
             503) echo "::notice title=Signing in::Not set up yet: the app's Microsoft ID isn't filled in. Syncing without a session is refused." ;;
