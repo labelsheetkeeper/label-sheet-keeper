@@ -6,7 +6,7 @@ REPO = os.path.dirname(S)
 OUT = os.path.join(S, 'out')
 os.makedirs(OUT, exist_ok=True)
 MOCK = open(S + '/mock-office.js').read()
-PORT = 8798
+PORT = 8798 + int(os.environ.get('LSK_PORT_SHIFT', '0'))   # shift lets several runs share one machine
 results = []
 
 def check(cond, name, detail=''):
